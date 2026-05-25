@@ -8,11 +8,11 @@
 </p>
 
 <p align="center">
-  <a href="README.md">🇬🇧 English</a>
-  &nbsp;|&nbsp;
-  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/Claude%20Code-compatible-green.svg" alt="Claude Code compatible">
-  <img src="https://img.shields.io/badge/license-MIT-purple.svg" alt="License: MIT">
+<a href="README.md">English</a> | 简体中文
+<br/><br/>
+<img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
+<img src="https://img.shields.io/badge/Claude%20Code-compatible-green.svg" alt="Claude Code compatible">
+<img src="https://img.shields.io/badge/license-MIT-purple.svg" alt="License: MIT">
 </p>
 
 ---
