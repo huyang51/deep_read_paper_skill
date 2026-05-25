@@ -1,0 +1,5 @@
+chromadb>=0.4,<1.0
+python-frontmatter>=1.0,<2.0
+watchfiles>=0.20,<1.0
+pydantic>=2.0,<3.0
+PyMuPDF>=1.23,<2.0  # Used by Claude Code directly (SKILL.md Phase 1); not imported by MCP server

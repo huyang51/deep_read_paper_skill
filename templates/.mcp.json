@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "paper_kb_mcp": {
+      "type": "stdio",
+      "command": "{{PYTHON_CMD}}",
+      "args": ["-m", "mcp_server"],
+      "cwd": "{{SKILL_DIR}}"
+    }
+  }
+}
