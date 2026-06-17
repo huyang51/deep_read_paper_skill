@@ -22,7 +22,7 @@ English | <a href="README_CN.md">简体中文</a>
 **Deep Read Paper Skill** transforms Claude Code into a **personal AI research assistant** that reads, analyzes, and remembers academic papers. It's not just a PDF summarizer — it's a complete paper knowledge management system:
 
 - 📄 **Read** any academic paper PDF page-by-page (never skips content)
-- 🧠 **Analyze** across 8 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk)
+- 🧠 **Analyze** across 10 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk) + 2 deep-understanding (counterfactual verification, implicit assumptions audit)
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
 - 🔗 **Connect** papers automatically — discovers methodological, topical, and complementary relationships
@@ -38,7 +38,7 @@ English | <a href="README_CN.md">简体中文</a>
 |---------|----------|
 | Reading papers is time-consuming; details fade | Structured dual output: detailed report + persistent memory entry |
 | Papers exist in isolation; hard to see the bigger picture | Cross-paper linking with Obsidian knowledge graph |
-| LLM summaries are shallow; miss nuance | 8-dimension analysis: 5 reader-side (problem → method → experiment → limitation) + 3 reviewer-side (novelty → failure → rejection risk) |
+| LLM summaries are shallow; miss nuance | 10-dimension analysis: 5 reader-side + 3 reviewer-side + 2 deep-understanding |
 | Knowledge lost between projects | Portable Obsidian vault, independent of Claude Code |
 | Can't find that paper from 3 months ago | ChromaDB semantic search + MCP tools |
 
@@ -49,7 +49,7 @@ English | <a href="README_CN.md">简体中文</a>
 ```mermaid
 graph TD
     A["User: Read this paper + PDF"] --> B["Phase 1: PDF Extraction"]
-    B --> C["Phase 2: 5-Dimension Analysis"]
+    B --> C["Phase 2: 10-Dimension Analysis"]
     C --> D["Phase 3: Report Generation"]
     C --> E["Phase 4: Memory Entry"]
     D --> F{"Existing papers?"}
@@ -63,15 +63,20 @@ graph TD
     style I fill:#fff9c4
 ```
 
-### The 5 Analysis Dimensions
+### The 10 Analysis Dimensions
 
-| # | Dimension | Core Questions Answered |
-|---|-----------|------------------------|
-| 1 | **Problem Genealogy** | What problem? Why couldn't prior work solve it? What insight unlocked the solution? |
-| 2 | **Method Genealogy** | Original or derived? Base methods? How changed and why? Technical difficulty? |
-| 3 | **Intuitive Interpretation** | Plain-language + analogies. I/O specs. Key formulas explained. |
-| 4 | **Experiment Analysis** | Claim-evidence mapping. Baseline rationale. Reproducibility assessment. |
-| 5 | **Limitation Analysis** | Method scope, experiment gaps, author honesty. Improvement directions. |
+| # | Category | Dimension | Core Questions Answered |
+|---|----------|-----------|------------------------|
+| 1 | Reader-side | **Problem Genealogy** | What problem? Why couldn't prior work solve it? What insight unlocked the solution? |
+| 2 | Reader-side | **Method Genealogy** | Original or derived? Base methods? How changed and why? Technical difficulty? |
+| 3 | Reader-side | **Intuitive Interpretation** | Plain-language + analogies. I/O specs. Key formulas explained. |
+| 4 | Reader-side | **Experiment Analysis** | Claim-evidence mapping. Baseline rationale. Reproducibility assessment. |
+| 5 | Reader-side | **Limitation Analysis** | Method scope, experiment gaps, author honesty. Improvement directions. |
+| 6 | Reviewer-side | **Novelty Audit** | Incremental / substantial / breakthrough? Claim-vs-essence alignment? Position vs concurrent work? |
+| 7 | Reviewer-side | **Failure Cases & Boundary** | What core assumptions? What failure modes authors didn't show? Cross-domain gaps? |
+| 8 | Reviewer-side | **Rejection Risk** | What would reviewers cite as reject reasons? Top-3 severity-ranked rebuttable points? |
+| 9 | Deep Understanding | **Counterfactual Verification** | Under what conditions does each core claim break? Data/scale/baseline substitution? |
+| 10 | Deep Understanding | **Implicit Assumptions Audit** | What hidden assumptions (data / evaluation / engineering) does the paper rely on? Verified or not? |
 
 ---
 
@@ -141,7 +146,7 @@ Read this paper: "D:/papers/SayPlan - 2023 - Grounding LLMs using 3D Scene Graph
 
 The skill automatically:
 1. Extracts all pages via PyMuPDF (never skips — even appendices)
-2. Performs 8-dimension deep analysis
+2. Performs 10-dimension deep analysis
 3. Generates a Chinese interpretation report → `reports/<short_name>_解读报告.md`
 4. Creates a structured memory entry → `papers/<short_name>.md`
 5. Indexes into ChromaDB for semantic search
