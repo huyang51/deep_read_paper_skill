@@ -38,6 +38,7 @@ class PaperIndexInput(BaseModel):
     problem_domain: str = Field(default="", description="问题领域")
     keywords: list[str] = Field(default_factory=list)
     core_contribution: str = Field(default="", description="一句话核心贡献")
+    novelty_level: str = Field(default="", description="新颖性定级: incremental | substantial | breakthrough")
     related_papers: list[int] = Field(default_factory=list)
     date_read: str = Field(default="", description="阅读日期 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$|^$")
     aliases: list[str] = Field(default_factory=list, description="别名列表（用于 Obsidian 图谱显示和搜索）")

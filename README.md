@@ -22,7 +22,7 @@ English | <a href="README_CN.md">简体中文</a>
 **Deep Read Paper Skill** transforms Claude Code into a **personal AI research assistant** that reads, analyzes, and remembers academic papers. It's not just a PDF summarizer — it's a complete paper knowledge management system:
 
 - 📄 **Read** any academic paper PDF page-by-page (never skips content)
-- 🧠 **Analyze** across 5 dimensions: problem genealogy, method lineage, intuitive interpretation, experiment design, and limitations
+- 🧠 **Analyze** across 8 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk)
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
 - 🔗 **Connect** papers automatically — discovers methodological, topical, and complementary relationships
@@ -38,7 +38,7 @@ English | <a href="README_CN.md">简体中文</a>
 |---------|----------|
 | Reading papers is time-consuming; details fade | Structured dual output: detailed report + persistent memory entry |
 | Papers exist in isolation; hard to see the bigger picture | Cross-paper linking with Obsidian knowledge graph |
-| LLM summaries are shallow; miss nuance | 5-dimension analysis: problem → methods → experiments → limitations |
+| LLM summaries are shallow; miss nuance | 8-dimension analysis: 5 reader-side (problem → method → experiment → limitation) + 3 reviewer-side (novelty → failure → rejection risk) |
 | Knowledge lost between projects | Portable Obsidian vault, independent of Claude Code |
 | Can't find that paper from 3 months ago | ChromaDB semantic search + MCP tools |
 
@@ -141,7 +141,7 @@ Read this paper: "D:/papers/SayPlan - 2023 - Grounding LLMs using 3D Scene Graph
 
 The skill automatically:
 1. Extracts all pages via PyMuPDF (never skips — even appendices)
-2. Performs 5-dimension deep analysis
+2. Performs 8-dimension deep analysis
 3. Generates a Chinese interpretation report → `reports/<short_name>_解读报告.md`
 4. Creates a structured memory entry → `papers/<short_name>.md`
 5. Indexes into ChromaDB for semantic search

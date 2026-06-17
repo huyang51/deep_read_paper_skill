@@ -20,6 +20,7 @@ method_category: "方法类别"
 problem_domain: "问题领域"
 keywords: ["关键词1", "关键词2"]
 core_contribution: "一句话核心贡献"
+novelty_level: incremental | substantial | breakthrough
 related_papers: []
 date_read: YYYY-MM-DD
 aliases: ["别名1", "别名2"]
@@ -50,6 +51,8 @@ tags: [tag1, tag2]
 > - 关键创新点（1-3条）
 > - 与最相关的前人工作的区别（统一用加粗文本，系统自动在旧论文中添加回链 wikilink 来生成图谱箭头）
 
+- **新颖性定位**: [incremental / substantial / breakthrough] — [一句话理由，引用 4.5.1 的判定]
+
 ## 主要实验结论
 
 > 1段概括：实验证明了什么？最重要的发现是什么？
@@ -59,6 +62,14 @@ tags: [tag1, tag2]
 1. [局限1]
 2. [局限2]
 3. [局限3]
+
+## 失败场景
+
+> 引用报告 4.6.2，列出 2-3 个**作者未在文中展示**的推断失效场景。
+
+1. [场景1：触发条件 → 预期表现]
+2. [场景2]
+3. [场景3]
 
 ## 与前人工作的关系
 
