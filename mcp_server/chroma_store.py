@@ -68,6 +68,7 @@ class ChromaStore:
                 "method_category": str(paper.get("method_category", "")),
                 "problem_domain": str(paper.get("problem_domain", "")),
                 "core_contribution": str(paper.get("core_contribution", "")),
+                "novelty_level": str(paper.get("novelty_level", "")),
                 "date_read": str(paper.get("date_read", "")),
                 "keywords": ", ".join(paper.get("keywords", [])),
                 "file": str(paper.get("file", "")),
@@ -109,6 +110,7 @@ class ChromaStore:
                     "method_category": meta.get("method_category", ""),
                     "problem_domain": meta.get("problem_domain", ""),
                     "core_contribution": meta.get("core_contribution", ""),
+                    "novelty_level": meta.get("novelty_level", ""),
                     "keywords": meta.get("keywords", ""),
                     "similarity": round(1 - dist, 4) if dist is not None else None,
                 })

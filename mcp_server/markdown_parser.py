@@ -178,6 +178,7 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
         "problem_domain": paper_data.get("problem_domain", ""),
         "keywords": paper_data.get("keywords", []),
         "core_contribution": paper_data.get("core_contribution", ""),
+        "novelty_level": paper_data.get("novelty_level", ""),
         "related_papers": paper_data.get("related_papers", []),
         "date_read": paper_data.get("date_read", date.today().isoformat()),
         "aliases": paper_data.get("aliases", []),

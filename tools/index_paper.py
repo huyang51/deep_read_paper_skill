@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--problem_domain", default="", help="Problem domain")
     parser.add_argument("--keywords", default="", help="Comma-separated keywords")
     parser.add_argument("--core_contribution", default="", help="One-sentence core contribution")
+    parser.add_argument("--novelty_level", default="", choices=["", "incremental", "substantial", "breakthrough"], help="Novelty level: incremental | substantial | breakthrough")
     parser.add_argument("--related_papers", default="", help="Comma-separated related paper IDs")
     parser.add_argument("--date_read", default=date.today().isoformat(), help="Read date YYYY-MM-DD")
     parser.add_argument("--aliases", default="", help="Comma-separated aliases for Obsidian graph display and search")
@@ -84,6 +85,7 @@ def main():
         "problem_domain": args.problem_domain,
         "keywords": keywords,
         "core_contribution": args.core_contribution,
+        "novelty_level": args.novelty_level,
         "related_papers": related,
         "date_read": args.date_read,
         "aliases": aliases,
