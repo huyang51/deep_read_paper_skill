@@ -39,6 +39,15 @@ def load_settings():
         print("  Example: \"D:/Paper_read/knowledge-base\"")
         sys.exit(1)
 
+    # Validate python_cmd is executable (best effort — skip on Windows where
+    # the configured command may not be on the PATH used during setup)
+    import shutil
+    python_cmd = settings.get("python_cmd", "python")
+    if shutil.which(python_cmd) is None:
+        print(f"[WARN] python_cmd '{python_cmd}' is not on PATH;")
+        print("       hooks/templates will use this exact string at deploy time.")
+        print("       Verify it works in the target environment before deploying.")
+
     return settings
 
 

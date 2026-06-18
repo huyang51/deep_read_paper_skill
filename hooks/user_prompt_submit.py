@@ -65,13 +65,37 @@ def _extract_id_from_yaml(content: str, fallback: str) -> str:
     return fallback
 
 
+# Lightweight cache for keyword search: {(prompt_words_tuple, papers_mtime) -> results}
+# Avoids re-reading every paper file on every user prompt when nothing has changed.
+_search_cache: dict = {"words": None, "papers_mtime": 0.0, "results": []}
+
+
 def quick_keyword_search(prompt: str) -> list[dict]:
-    """Simple word-frequency search over vault papers."""
+    """Simple word-frequency search over vault papers.
+
+    Cached by (prompt words, papers directory mtime) so subsequent prompts with
+    the same words skip re-reading all paper files when vault is unchanged.
+    """
     results = []
     if not PAPERS_DIR.exists():
         return results
 
+    # Compute the latest mtime across all paper files (cheap stat call only)
+    try:
+        papers_mtime = max((f.stat().st_mtime for f in PAPERS_DIR.glob("*.md")), default=0.0)
+    except Exception:
+        papers_mtime = 0.0
+
+    # Tokenize prompt once (skip short words and punctuation)
     prompt_lower = prompt.lower()
+    words = tuple(
+        w.strip(",.?!()[]{}\"'") for w in prompt_lower.split() if len(w.strip(",.?!()[]{}\"'")) >= 2
+    )
+
+    # Return cached results if both the prompt words and vault mtime are unchanged
+    if _search_cache["words"] == words and _search_cache["papers_mtime"] == papers_mtime:
+        return _search_cache["results"]
+
     for paper_file in PAPERS_DIR.glob("*.md"):
         try:
             with open(paper_file, "r", encoding="utf-8") as f:
@@ -80,11 +104,9 @@ def quick_keyword_search(prompt: str) -> list[dict]:
             continue
 
         score = 0
-        for word in prompt_lower.split():
-            word = word.strip(",.?!()[]{}\"'")
-            if len(word) < 2:
-                continue
-            score += content.lower().count(word)
+        content_lower = content.lower()
+        for word in words:
+            score += content_lower.count(word)
 
         if score > 0:
             title = _extract_title_from_yaml(content, paper_file.stem)
@@ -97,7 +119,13 @@ def quick_keyword_search(prompt: str) -> list[dict]:
             })
 
     results.sort(key=lambda r: -r["score"])
-    return results[:5]
+    results = results[:5]
+
+    # Update cache
+    _search_cache["words"] = words
+    _search_cache["papers_mtime"] = papers_mtime
+    _search_cache["results"] = results
+    return results
 
 
 def main():

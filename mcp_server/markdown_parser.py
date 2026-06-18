@@ -43,8 +43,10 @@ def build_relation_graph() -> dict:
     return graph
 
 
-# Simple TTL cache for get_all_papers to avoid re-parsing every .md file on each call
-_all_papers_cache: dict = {"data": None, "mtime": 0.0, "ttl": 5.0}
+# Simple TTL cache for get_all_papers to avoid re-parsing every .md file on each call.
+# Cache is keyed by (papers_dir, mtime) so changing vault_dir via PAPER_KB_VAULT_DIR
+# environment variable does not serve stale entries from the previous vault.
+_all_papers_cache: dict = {"papers_dir": None, "data": None, "mtime": 0.0, "ttl": 5.0}
 
 
 def get_all_papers(papers_dir: Path = None) -> list[dict]:
@@ -55,8 +57,10 @@ def get_all_papers(papers_dir: Path = None) -> list[dict]:
     import time
     now = time.time()
 
-    # Use cache if fresh
-    if _all_papers_cache["data"] is not None and (now - _all_papers_cache["mtime"]) < _all_papers_cache["ttl"]:
+    # Use cache if fresh AND for the same directory (avoids stale data after vault switch)
+    if (_all_papers_cache["data"] is not None
+            and _all_papers_cache["papers_dir"] == str(papers_dir)
+            and (now - _all_papers_cache["mtime"]) < _all_papers_cache["ttl"]):
         return _all_papers_cache["data"]
 
     papers = []
@@ -70,6 +74,7 @@ def get_all_papers(papers_dir: Path = None) -> list[dict]:
 
     _all_papers_cache["data"] = papers
     _all_papers_cache["mtime"] = now
+    _all_papers_cache["papers_dir"] = str(papers_dir)
     return papers
 
 
@@ -77,6 +82,7 @@ def invalidate_papers_cache():
     """Invalidate the papers cache (call after file changes)."""
     _all_papers_cache["data"] = None
     _all_papers_cache["mtime"] = 0.0
+    _all_papers_cache["papers_dir"] = None
 
 
 def get_paper_by_id(paper_id: int, papers_dir: Path = None) -> Optional[dict]:

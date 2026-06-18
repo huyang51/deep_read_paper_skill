@@ -8,7 +8,11 @@ from mcp_server.markdown_parser import get_all_papers, parse_paper
 class ChromaStore:
     def __init__(self):
         self.client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-        if EMBEDDING_MODEL == "all-MiniLM-L6-v2":
+        # Use ChromaDB's default (lightweight) embedder only for the specific
+        # default model it ships with. For everything else (including
+        # multilingual models), use SentenceTransformer so users can pick
+        # any compatible model name from HuggingFace.
+        if not EMBEDDING_MODEL or EMBEDDING_MODEL == "all-MiniLM-L6-v2":
             self.embedder = embedding_functions.DefaultEmbeddingFunction()
         else:
             self.embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
@@ -63,14 +67,19 @@ class ChromaStore:
             metadatas.append({
                 "id": str(paper.get("id", "")),
                 "title": str(paper.get("title", "")),
+                "short_name": str(paper.get("short_name", "")),
                 "year": str(paper.get("year", "")),
                 "venue": str(paper.get("venue", "")),
+                "authors": ", ".join(paper.get("authors", [])),
                 "method_category": str(paper.get("method_category", "")),
                 "problem_domain": str(paper.get("problem_domain", "")),
                 "core_contribution": str(paper.get("core_contribution", "")),
                 "novelty_level": str(paper.get("novelty_level", "")),
                 "date_read": str(paper.get("date_read", "")),
                 "keywords": ", ".join(paper.get("keywords", [])),
+                "aliases": ", ".join(paper.get("aliases", [])),
+                "tags": ", ".join(paper.get("tags", [])),
+                "related_papers": ",".join(str(r) for r in paper.get("related_papers", [])),
                 "file": str(paper.get("file", "")),
             })
 
@@ -127,13 +136,19 @@ class ChromaStore:
         metadata = {
             "id": str(paper_data.get("id", "")),
             "title": str(paper_data.get("title", "")),
+            "short_name": str(paper_data.get("short_name", "")),
             "year": str(paper_data.get("year", "")),
             "venue": str(paper_data.get("venue", "")),
+            "authors": ", ".join(paper_data.get("authors", [])),
             "method_category": str(paper_data.get("method_category", "")),
             "problem_domain": str(paper_data.get("problem_domain", "")),
             "core_contribution": str(paper_data.get("core_contribution", "")),
+            "novelty_level": str(paper_data.get("novelty_level", "")),
             "date_read": str(paper_data.get("date_read", "")),
             "keywords": ", ".join(paper_data.get("keywords", [])),
+            "aliases": ", ".join(paper_data.get("aliases", [])),
+            "tags": ", ".join(paper_data.get("tags", [])),
+            "related_papers": ",".join(str(r) for r in paper_data.get("related_papers", [])),
             "file": str(paper_data.get("file", "")),
         }
 

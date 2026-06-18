@@ -2,7 +2,7 @@
 
 每篇深度阅读的论文在 `knowledge-base/papers/` 下生成一个结构化摘要文件，用于 Obsidian Vault 长期存储和跨论文对比。
 
-> **同步注意**：此模板与 `vault-template/.obsidian/templates/paper-memory-template.md` 内容需保持一致，修改时请同步更新。
+> **模板同步**:此模板与 `vault-template/.obsidian/templates/paper-memory-template.md` 内容保持一致(单一来源是 `references/memory_entry_template.md`,vault 端模板是它的副本)。修改时请同步更新两个文件。
 
 ---
 
