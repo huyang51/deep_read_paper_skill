@@ -23,7 +23,17 @@ from mcp_server.cross_refs import find_related
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("paper_kb_mcp")
 
-store = ChromaStore()
+# Lazy-initialized on first use to avoid side effects at import time
+# (e.g., when running tests or when ChromaDB init would fail).
+_store: ChromaStore | None = None
+
+
+def get_store() -> ChromaStore:
+    """Get the ChromaStore singleton, initializing on first call."""
+    global _store
+    if _store is None:
+        _store = ChromaStore()
+    return _store
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # IMPORTANT: The TOOLS list below must be manually kept in sync with the Pydantic
@@ -140,7 +150,7 @@ async def handle_paper_search(params: dict) -> str:
     except Exception as e:
         return json.dumps({"error": f"Invalid parameters: {e}"})
 
-    results = store.search(input_data.query, input_data.n_results)
+    results = get_store().search(input_data.query, input_data.n_results)
 
     if input_data.response_format == ResponseFormat.markdown:
         if not results:
@@ -255,7 +265,7 @@ async def handle_paper_index(params: dict) -> str:
 
     paper = parse_paper(filepath)
     if paper:
-        store.upsert_paper(str(paper["id"]), paper)
+        get_store().upsert_paper(str(paper["id"]), paper)
 
         # Add reverse wikilinks from old papers → new paper so Obsidian graph
         # arrows show the direction of academic influence (old → new).
@@ -287,7 +297,7 @@ async def handle_paper_remove(params: dict) -> str:
     title = paper.get("title", "Unknown")
     # Delete file first, then index — if file deletion fails, index remains consistent
     file_deleted = delete_paper_file(input_data.paper_id)
-    store.delete_paper(str(input_data.paper_id))
+    get_store().delete_paper(str(input_data.paper_id))
 
     return json.dumps({
         "status": "ok",
@@ -297,7 +307,7 @@ async def handle_paper_remove(params: dict) -> str:
 
 
 async def handle_index_stats(params: dict = None) -> str:
-    stats = store.get_stats()
+    stats = get_store().get_stats()
     return json.dumps(stats, ensure_ascii=False, indent=2)
 
 
@@ -406,14 +416,14 @@ async def watch_vault():
                 continue
             if change_type in (Change.added, Change.modified):
                 try:
-                    store.upsert_paper_by_file(filepath)
+                    get_store().upsert_paper_by_file(filepath)
                     logger.info(f"  Indexed: {filepath.name}")
                 except Exception as e:
                     logger.error(f"  Failed to index {filepath.name}: {e}")
             elif change_type == Change.deleted:
                 # Can't get paper_id from deleted file, do full re-sync
                 logger.info(f"  Deleted: {filepath.name}, re-syncing index")
-                store.index_all_papers()
+                get_store().index_all_papers()
                 break
 
 
@@ -438,9 +448,9 @@ async def main():
     logger.info("Starting paper_kb_mcp server...")
 
     # Initialize index
-    store.init_collection()
-    store.index_all_papers()
-    logger.info(f"Indexed {store.collection.count()} papers.")
+    get_store().init_collection()
+    get_store().index_all_papers()
+    logger.info(f"Indexed {get_store().collection.count()} papers.")
 
     # Start file watcher in background
     watcher_task = asyncio.create_task(watch_vault())
