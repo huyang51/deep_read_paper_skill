@@ -1,11 +1,26 @@
-"""deep_read_paper_skill config generator.
+"""deep_read_paper_skill — package setup + config generator.
+
+This file does TWO things:
+
+1. **Package installation** (via `pip install -e .` or `pip install .`):
+   - Reads dependencies from `requirements.txt`
+   - Installs the `mcp_server` package as a Python module
+   - This is REQUIRED for the hooks/templates (which run `python -m mcp_server`)
+
+2. **Config generation** (via `python setup.py` or `python -m setup`):
+   - Renders templates/.mcp.json and templates/.claude-settings.json
+     with the actual SKILL_DIR / PYTHON_CMD paths
+   - Outputs to output/ (or auto-deploys to project_dir if set)
 
 Usage:
-  1. Edit settings.json (the ONLY config file you need to touch)
-  2. Set project_dir to your Claude Code project path
-  3. Run: python setup.py
-     - If project_dir is set: configs auto-deployed to your project
-     - If project_dir is null: configs generated to output/ (copy manually)
+  # Step 1: install package + deps
+  pip install -e .
+
+  # Step 2: edit config
+  $EDITOR settings.json   # Fill in vault_dir, project_dir, python_cmd
+
+  # Step 3: generate configs
+  python setup.py
 """
 import json
 import re
@@ -17,6 +32,27 @@ SKILL_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SKILL_DIR / "output"
 TEMPLATES_DIR = SKILL_DIR / "templates"
 
+
+# ─── Package metadata (used when running `pip install .`) ──────────────────
+
+def _read_requirements() -> list[str]:
+    """Read requirements.txt and parse each line, stripping comments and extras."""
+    req_file = SKILL_DIR / "requirements.txt"
+    if not req_file.exists():
+        return []
+    requirements = []
+    for line in req_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Remove inline comments
+        line = line.split("#", 1)[0].strip()
+        if line:
+            requirements.append(line)
+    return requirements
+
+
+# ─── Config generation ──────────────────────────────────────────────────────
 
 def load_settings():
     settings_file = SKILL_DIR / "settings.json"
@@ -32,15 +68,12 @@ def load_settings():
         if not k.startswith("_"):
             settings[k] = v
 
-    # Validate required settings
     if not settings.get("vault_dir"):
         print("[ERROR] settings.json: vault_dir is required and cannot be empty.")
         print("  vault_dir: Absolute path to your Obsidian vault / knowledge base directory.")
         print("  Example: \"D:/Paper_read/knowledge-base\"")
         sys.exit(1)
 
-    # Validate python_cmd is executable (best effort — skip on Windows where
-    # the configured command may not be on the PATH used during setup)
     import shutil
     python_cmd = settings.get("python_cmd", "python")
     if shutil.which(python_cmd) is None:
@@ -58,7 +91,6 @@ def render_template(template_path: Path, variables: dict) -> str:
     for key, val in sorted(variables.items(), key=lambda kv: -len(kv[0])):
         content = content.replace("{{" + key + "}}", str(val))
 
-    # Warn about unreplaced placeholders
     unreplaced = set(re.findall(r'\{\{(\w+)\}\}', content))
     if unreplaced:
         print(f"  [WARN] Unreplaced placeholders in {template_path.name}: {unreplaced}")
@@ -66,7 +98,7 @@ def render_template(template_path: Path, variables: dict) -> str:
     return content
 
 
-def main():
+def generate_config():
     print("=" * 55)
     print("  deep_read_paper_skill -- config generator")
     print("=" * 55)
@@ -92,7 +124,6 @@ def main():
 
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    # Generate .mcp.json
     mcp_template = TEMPLATES_DIR / ".mcp.json"
     if mcp_template.exists():
         rendered = render_template(mcp_template, variables)
@@ -101,7 +132,6 @@ def main():
             f.write(rendered)
         print(f"  [OK] output/.mcp.json")
 
-    # Generate .claude-settings.json
     claude_template = TEMPLATES_DIR / ".claude-settings.json"
     if claude_template.exists():
         rendered = render_template(claude_template, variables)
@@ -112,7 +142,6 @@ def main():
 
     print()
 
-    # Auto-deploy to project if project_dir is configured
     if project_dir:
         project_path = Path(project_dir)
         claude_dir = project_path / ".claude"
@@ -130,4 +159,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    generate_config()
