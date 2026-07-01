@@ -3,3 +3,4 @@ python-frontmatter>=1.0,<2.0
 watchfiles>=0.20,<1.0
 pydantic>=2.0,<3.0
 PyMuPDF>=1.23,<2.0  # Used by Claude Code directly (SKILL.md Phase 1); not imported by MCP server
+sentence-transformers>=2.2,<4.0  # Required by ChromaDB's SentenceTransformerEmbeddingFunction when using a non-default embedding model (e.g., paraphrase-multilingual-MiniLM-L12-v2)
