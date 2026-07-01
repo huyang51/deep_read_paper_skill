@@ -92,22 +92,47 @@ graph TD
 
 ### 安装
 
+> ⚠️ **强烈建议**：在独立的 Conda 环境中安装，避免与本地其他 Python 项目依赖冲突。
+
 ```bash
-# 1. 克隆并安装依赖
+# 1. 克隆仓库
 git clone https://github.com/huyang51/deep_read_paper_skill.git
 cd deep_read_paper_skill
+
+# 2. 创建并激活 Conda 环境（每台机器只需做一次）
+conda create -n paper-kb python=3.10 -y
+conda activate paper-kb
+
+# 3. 在激活的 conda 环境中安装依赖
 pip install -r requirements.txt
 
-# 2. 编辑 settings.json（只需填写 3 个必填项）
+# 4. 编辑 settings.json（填写 3 个必填项）
+# - vault_dir:   存储报告和记忆条目的目录
+# - project_dir: 你的 Claude Code 项目根目录
+# - python_cmd:  conda 环境中 python 的**绝对路径**，例如
+#                - Linux/Mac:  "$(conda info --base)/envs/paper-kb/bin/python"
+#                - Windows:    "%USERPROFILE%\anaconda3\envs\paper-kb\python.exe"
+#                在激活的 conda 环境中执行 `which python`（Linux/Mac）
+#                或 `where python`（Windows）可获取该路径。
 
-# 3. 部署到你的项目
+# 5. 部署到你的项目（仍在 conda 环境中）
 python setup.py
 
-# 4. (可选) 初始化 Obsidian vault
+# 6. （可选）初始化 Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
 
-# 5. 重启 Claude Code
+# 7. 重启 Claude Code
 ```
+
+> **💡 为什么要用 Conda 环境**：
+> - 将 `chromadb` / `pydantic` / `PyMuPDF` 等依赖与系统 Python 及其他项目隔离
+> - 升级 / 卸载本 skill 时不会影响其他项目
+> - 跨机器复现：只需 `pip freeze > requirements.txt` + `pip install -r requirements.txt`
+
+> **常见坑**：
+> - 忘记 `conda activate paper-kb` → `pip install` 装到了系统 Python，hooks 报 `ModuleNotFoundError`
+> - `settings.json` 中 `python_cmd` 指向系统 Python 而非 conda 环境 → 同样的报错
+> - 解决：在激活的 conda 环境中执行 `which python`（Linux/Mac）或 `where python`（Windows），将绝对路径填入 `python_cmd`
 
 ### 配置 (`settings.json`)
 
@@ -115,8 +140,10 @@ cp -r vault-template/ /your/knowledge-base/path/
 {
   "vault_dir": "D:/my-papers/knowledge-base",
   "project_dir": "D:/my-papers",
-  "python_cmd": "D:/Anaconda/python.exe",
-  "embedding_model": "all-MiniLM-L6-v2"
+  "python_cmd": "D:/Anaconda3/envs/paper-kb/python.exe",
+  "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+  "trigger_keywords_cn": ["论文", "文献", "paper", "paper reading", "深度阅读", "论文解读", "论文分析", "读论文"],
+  "trigger_keywords_en": ["paper", "literature", "deep read", "paper reading", "paper analysis"]
 }
 ```
 
@@ -124,9 +151,10 @@ cp -r vault-template/ /your/knowledge-base/path/
 |------|------|------|
 | `vault_dir` | ✅ | 知识库路径。报告、记忆条目和向量索引存储于此。 |
 | `project_dir` | ✅ | Claude Code 项目根目录，`setup.py` 自动将配置部署至此。 |
-| `python_cmd` | ✅ | Python 解释器路径（Windows 下建议用绝对路径）。 |
-| `embedding_model` | 否 | 主要阅读中文论文时，建议设为 `paraphrase-multilingual-MiniLM-L12-v2`。 |
-| `trigger_keywords_cn/en` | 否 | 自定义触发关键词（默认值覆盖常见模式）。 |
+| `python_cmd` | ✅ | **conda 环境中 python 的绝对路径**（如 Windows: `D:/Anaconda3/envs/paper-kb/python.exe`；Linux/Mac: `/opt/anaconda3/envs/paper-kb/bin/python`）。在激活的 conda 环境中执行 `which python` / `where python` 即可获取。 |
+| `embedding_model` | 否 | **默认: `paraphrase-multilingual-MiniLM-L12-v2`**（中英文双语）。若仅处理英文，可改用 `all-MiniLM-L6-v2`。 |
+| `trigger_keywords_cn` | 否 | 自动触发论文相关搜索提示的中文关键词（UserPromptSubmit hook）。 |
+| `trigger_keywords_en` | 否 | 自动触发论文相关搜索提示的英文关键词（UserPromptSubmit hook）。 |
 
 > **路径格式**：Windows 下请使用正斜杠 `/`（如 `D:/path/to/dir`）。
 >
