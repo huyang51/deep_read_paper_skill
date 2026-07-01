@@ -63,7 +63,7 @@ graph TD
     style I fill:#fff9c4
 ```
 
-### The 10 Analysis Dimensions
+### The 11 Analysis Dimensions
 
 | # | Category | Dimension | Core Questions Answered |
 |---|----------|-----------|------------------------|
@@ -77,6 +77,7 @@ graph TD
 | 8 | Reviewer-side | **Rejection Risk** | What would reviewers cite as reject reasons? Top-3 severity-ranked rebuttable points? |
 | 9 | Deep Understanding | **Counterfactual Verification** | Under what conditions does each core claim break? Data/scale/baseline substitution? |
 | 10 | Deep Understanding | **Implicit Assumptions Audit** | What hidden assumptions (data / evaluation / engineering) does the paper rely on? Verified or not? |
+| 11 | Deep Understanding | **Synthesis Judgment** | Synthesize all findings into an actionable "next-step map" — where to start if building on this work? |
 
 ---
 
