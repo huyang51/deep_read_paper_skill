@@ -319,7 +319,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python -m mc
 <details>
 <summary><b>Q: 中文搜索结果不准确？</b></summary>
 
-默认嵌入模型 `all-MiniLM-L6-v2` 主要优化英文。在 `settings.json` 中将 `embedding_model` 改为 `paraphrase-multilingual-MiniLM-L12-v2`，切换后需重建向量索引。
+默认嵌入模型 `paraphrase-multilingual-MiniLM-L12-v2` 同时支持中英文。如果你之前用的是旧版默认 `all-MiniLM-L6-v2`（仅优化英文），请在 `settings.json` 中改回 `paraphrase-multilingual-MiniLM-L12-v2`，然后重建向量索引。
 </details>
 
 <details>
