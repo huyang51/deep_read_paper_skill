@@ -92,23 +92,48 @@ graph TD
 
 ### Installation
 
+> ⚠️ **Strongly recommended**: install inside a dedicated Conda environment to avoid conflicts with other Python projects on your machine.
+
 ```bash
-# 1. Clone and install
+# 1. Clone the repository
 git clone https://github.com/huyang51/deep_read_paper_skill.git
 cd deep_read_paper_skill
+
+# 2. Create and activate a Conda environment (do this ONCE per machine)
+conda create -n paper-kb python=3.10 -y
+conda activate paper-kb
+
+# 3. Install dependencies (inside the activated conda env)
 pip install -r requirements.txt
 
-# 2. Edit ONE file: settings.json
+# 4. Edit ONE file: settings.json
 # Fill in vault_dir, project_dir, python_cmd (3 required fields)
+# - vault_dir:   where to store reports and memory entries
+# - project_dir: your Claude Code project root
+# - python_cmd:  ABSOLUTE path to the conda env's python, e.g.
+#                - Linux/Mac:  "$(conda info --base)/envs/paper-kb/bin/python"
+#                - Windows:    "%USERPROFILE%\anaconda3\envs\paper-kb\python.exe"
+#                Run `which python` (Linux/Mac) or `where python` (Windows)
+#                inside the activated env to confirm the path.
 
-# 3. Deploy to your project
+# 5. Deploy to your project (still inside the conda env)
 python setup.py
 
-# 4. (Optional) Initialize Obsidian vault
+# 6. (Optional) Initialize Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
 
-# 5. Restart Claude Code
+# 7. Restart Claude Code
 ```
+
+> **💡 Why a Conda environment**:
+> - Isolates `chromadb` / `pydantic` / `PyMuPDF` from your system Python and other projects
+> - Upgrading or uninstalling the skill never affects anything else
+> - Reproducible across machines: `pip freeze > requirements.txt` then `pip install -r requirements.txt`
+
+> **Common pitfalls**:
+> - Forgot to `conda activate paper-kb` → `pip install` lands in system Python, hooks fail with `ModuleNotFoundError`
+> - `python_cmd` in `settings.json` points to system Python instead of the conda env's python → same failure
+> - Fix: inside the activated env, run `which python` (Linux/Mac) or `where python` (Windows) and copy the absolute path into `python_cmd`
 
 ### Configuration (`settings.json`)
 
@@ -116,7 +141,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 {
   "vault_dir": "D:/my-papers/knowledge-base",
   "project_dir": "D:/my-papers",
-  "python_cmd": "D:/Anaconda/python.exe",
+  "python_cmd": "D:/Anaconda3/envs/paper-kb/python.exe",
   "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
   "trigger_keywords_cn": ["论文", "文献", "paper", "paper reading", "深度阅读", "论文解读", "论文分析", "读论文"],
   "trigger_keywords_en": ["paper", "literature", "deep read", "paper reading", "paper analysis"]
@@ -127,7 +152,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 |-------|----------|-------------|
 | `vault_dir` | ✅ | Where reports, memory entries, and ChromaDB index are stored |
 | `project_dir` | ✅ | Your Claude Code project root — `setup.py` auto-deploys config here |
-| `python_cmd` | ✅ | Python interpreter path (absolute recommended on Windows) |
+| `python_cmd` | ✅ | **Absolute path to the conda env's python** (e.g. `D:/Anaconda3/envs/paper-kb/python.exe` on Windows, `/opt/anaconda3/envs/paper-kb/bin/python` on Linux/Mac). Run `which python` inside the activated env to confirm. |
 | `embedding_model` | No | **Default: `paraphrase-multilingual-MiniLM-L12-v2`** (Chinese + English). For pure English only, switch to `all-MiniLM-L6-v2` |
 | `trigger_keywords_cn` | No | Chinese keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
 | `trigger_keywords_en` | No | English keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
