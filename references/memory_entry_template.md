@@ -4,6 +4,8 @@
 
 > **模板同步**:此模板与 `references/memory_entry_template.md` 内容保持一致(单一来源是 `references/memory_entry_template.md`,vault 端模板是它的副本)。修改时请同步更新两个文件。
 
+> **⚠️ 零基础可理解性原则**：记忆条目中所有方法名、术语、缩写首次出现时必须有一句话定位（例如"FLMR（一种 2023 年提出的多模态细粒度检索方法）"），便于未来回顾时无需翻原文也能理解。
+
 ---
 
 ## YAML Frontmatter（文件开头，必须）
