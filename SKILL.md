@@ -473,7 +473,7 @@ tags: [tag1, tag2]
 
 ### 4.6 Obsidian 图谱视图
 
-图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`insights/`、`templates/` 目录通过路径过滤器隐藏（用户可在图谱设置中手动切换）：
+图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`insights/`、`.obsidian/templates/` 目录通过路径过滤器隐藏（用户可在图谱设置中手动切换）：
 
 ```json
 {
