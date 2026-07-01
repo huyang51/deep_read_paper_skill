@@ -116,7 +116,9 @@ cp -r vault-template/ /your/knowledge-base/path/
   "vault_dir": "D:/my-papers/knowledge-base",
   "project_dir": "D:/my-papers",
   "python_cmd": "D:/Anaconda/python.exe",
-  "embedding_model": "all-MiniLM-L6-v2"
+  "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+  "trigger_keywords_cn": ["论文", "文献", "paper", "paper reading", "深度阅读", "论文解读", "论文分析", "读论文"],
+  "trigger_keywords_en": ["paper", "literature", "deep read", "paper reading", "paper analysis"]
 }
 ```
 
@@ -125,8 +127,9 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `vault_dir` | ✅ | Where reports, memory entries, and ChromaDB index are stored |
 | `project_dir` | ✅ | Your Claude Code project root — `setup.py` auto-deploys config here |
 | `python_cmd` | ✅ | Python interpreter path (absolute recommended on Windows) |
-| `embedding_model` | No | For Chinese papers, use `paraphrase-multilingual-MiniLM-L12-v2` |
-| `trigger_keywords_cn/en` | No | Customize auto-trigger keywords (defaults cover common patterns) |
+| `embedding_model` | No | **Default: `paraphrase-multilingual-MiniLM-L12-v2`** (Chinese + English). For pure English only, switch to `all-MiniLM-L6-v2` |
+| `trigger_keywords_cn` | No | Chinese keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
+| `trigger_keywords_en` | No | English keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
 
 > **Path format**: Use forward slashes `/` even on Windows (e.g., `D:/path/to/dir`).
 >
@@ -289,7 +292,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python -m mc
 <details>
 <summary><b>Q: Chinese search results are poor?</b></summary>
 
-The default embedding model (`all-MiniLM-L6-v2`) is optimized for English. Switch to `paraphrase-multilingual-MiniLM-L12-v2` in `settings.json`. Re-index after the change.
+The default embedding model (`paraphrase-multilingual-MiniLM-L12-v2`) supports both Chinese and English. If you previously had `all-MiniLM-L6-v2` configured (an older default), switch back to `paraphrase-multilingual-MiniLM-L12-v2` in `settings.json` and re-index.
 </details>
 
 <details>
