@@ -444,11 +444,43 @@ tags: [tag1, tag2]
 
 ### 4.5 跨论文关联
 
-> 🚨 **必读 — 时间线校验**（这是本 skill 中最容易出错、最关键的规则）
+> 🚨 **必读 — 三大硬性规则**（按重要性排序，违反任一 = 知识库污染）
 >
-> **图谱箭头方向：旧论文 → 新论文**（学术影响流向）。**不是双向！**
->
-> 当你**非按时间顺序**阅读时（例如先读了 2024 的 ReT，现在索引 2023 的 UniIR），脚本 `index_paper.py` 会**自动**给 vault 中已存在的论文（ReT）添加 `## 后续引用 [[UniIR]]` 段落——但这是**完全反向的**！必须按下面规则手动修正。
+> 1. **相关性优先**：填 `related_papers` 前**必须**调用 MCP 工具 `paper_find_related` 找候选
+> 2. **时间线方向**：图谱箭头方向 = 旧论文 → 新论文（学术影响流向）
+> 3. **非时间顺序警告**：脚本会自动检测方向错误并停止添加 backlink
+
+#### 4.5.1 规则 1：相关性优先（最重要的规则）
+
+**填 `related_papers` 之前必须先用 `paper_find_related` 工具找候选**。该工具会从三方面判断相关性：
+- **frontmatter 引用**：`related_papers` 字段
+- **wikilinks**：body 中的 `[[...]]` 链接
+- **共享关键词**：method_category / problem_domain / keywords 的重叠数（需 ≥ 2 个才视为相关）
+
+工具返回的每个候选都包含：
+- `relation_type`：`method_similar` / `problem_related` / `complementary` / `evolutionary`
+- `shared_keywords`：具体共享了哪些关键词
+
+**禁止** 仅凭 Agent 直觉填 `related_papers`——必须以工具返回的候选为基础。
+
+**完整工作流**：
+1. 写完论文 body，**先不填** `related_papers` 字段
+2. **临时索引**论文（拿到 ID），使用占位符 `related_papers: []`
+3. 调用 `paper_find_related(new_paper_id)` 找出所有候选
+4. **人工核验**每个候选：
+   - `relation_type` 是否合理（method_similar / problem_related / complementary / evolutionary）
+   - `shared_keywords` 是否真的重叠（不只是字符串匹配）
+   - 是否真的有学术联系（不是同名巧合）
+5. 核验通过的候选才填入 `related_papers` 字段
+6. 重新索引（或直接更新 frontmatter）
+
+> ⚠️ **不能直接照搬工具结果**——工具是基于字符串匹配启发式，可能误判。人工核验是最后一道防线。
+
+#### 4.5.2 规则 2：图谱箭头方向 = 旧论文 → 新论文
+
+**图谱箭头方向：旧论文 → 新论文**（学术影响流向）。**不是双向！**
+
+当**非按时间顺序**阅读时（例如先读了 2024 的 ReT，现在索引 2023 的 UniIR），脚本 `index_paper.py` 会**自动**给 vault 中已存在的论文（ReT）添加 `## 后续引用 [[UniIR]]` 段落——但这是**完全反向的**！必须按下面规则手动修正。
 
 **4.1 关联前必做：时间线校验**
 

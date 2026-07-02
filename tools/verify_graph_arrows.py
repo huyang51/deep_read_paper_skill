@@ -42,6 +42,65 @@ def get_body_bold_refs(paper: dict, target_short_name: str) -> int:
     return len(re.findall(rf"\*\*{re.escape(target_short_name)}\*\*", body))
 
 
+def verify_relevance(papers: list[dict]) -> list[str]:
+    """Check that every related_papers entry has been validated by paper_find_related.
+
+    Specifically: for every (A, B) in related_papers, check that either:
+    - A.body or B.body contains a clear relation justification mentioning both papers, OR
+    - The shared keywords field documents the relevance
+
+    Since we can't re-call paper_find_related here (it requires running MCP),
+    we check for a body-level "## 与前人工作的关系" or "## 后续引用" section
+    that mentions the related paper.
+    """
+    issues = []
+
+    for paper in papers:
+        cur_short = paper.get("short_name", "")
+        related_ids = paper.get("related_papers", []) or []
+        if not related_ids:
+            continue
+
+        body = paper.get("body", "")
+
+        for rel_id in related_ids:
+            related = next((p for p in papers if p.get("id") == rel_id), None)
+            if not related:
+                continue
+            rel_short = related.get("short_name", "")
+
+            # Check if this paper's body mentions the related paper in a
+            # relation context (either ## 与前人工作的关系 or ## 后续引用).
+            # We look for the related paper's short_name in bold or wikilink form
+            # within these specific sections.
+            has_relation_mention = False
+
+            # Check "## 与前人工作的关系" section
+            if "## 与前人工作的关系" in body:
+                section = body.split("## 与前人工作的关系", 1)[1]
+                if "## " in section:  # Until next section
+                    section = section.split("## ", 1)[0]
+                if rel_short in section:
+                    has_relation_mention = True
+
+            # Check "## 后续引用" section
+            if not has_relation_mention and "## 后续引用" in body:
+                section = body.split("## 后续引用", 1)[1]
+                if f"[[{rel_short}]]" in section:
+                    has_relation_mention = True
+
+            if not has_relation_mention:
+                issues.append(
+                    f"❌ [{cur_short}] lists [{rel_short}] as related but has NO "
+                    f"justification in body (no mention in '## 与前人工作的关系' "
+                    f"or '## 后续引用' section). "
+                    f"Use paper_find_related to find candidates, then add a "
+                    f"justification in the paper body."
+                )
+
+    return issues
+
+
 def verify_arrows(papers: list[dict]) -> list[str]:
     """Check all cross-paper graph arrows. Return list of violations."""
     issues = []
@@ -142,18 +201,31 @@ def main():
     print(f"Checking {len(papers)} papers for graph arrow consistency...")
     print()
 
-    issues = verify_arrows(papers)
-    if not issues:
-        print("✅ All graph arrows follow the old→new direction rule!")
+    # Check 1: relevance (every related_papers has body justification)
+    relevance_issues = verify_relevance(papers)
+    if relevance_issues:
+        print(f"❌ Relevance issues ({len(relevance_issues)}):\n")
+        for issue in relevance_issues:
+            print(f"  {issue}\n")
+
+    # Check 2: arrow direction (old → new)
+    arrow_issues = verify_arrows(papers)
+    if arrow_issues:
+        print(f"❌ Arrow direction issues ({len(arrow_issues)}):\n")
+        for issue in arrow_issues:
+            print(f"  {issue}\n")
+
+    if not relevance_issues and not arrow_issues:
+        print("✅ All graph arrows follow the old→new direction rule,")
+        print("   and every related_papers entry has a body justification!")
         sys.exit(0)
 
-    print(f"❌ Found {len(issues)} issue(s):\n")
-    for issue in issues:
-        print(f"  {issue}\n")
     print()
-    print("Fix manually per SKILL.md §4.5 '时间线校验':")
-    print("  - OLD paper should have ## 后续引用 [[NEW]] section")
-    print("  - NEW paper should reference OLD with **bold** only")
+    print("Fix manually per SKILL.md §4.5:")
+    print("  1. Use paper_find_related to find related papers (DON'T guess)")
+    print("  2. Add justification in '## 与前人工作的关系' body section")
+    print("  3. OLD paper should have ## 后续引用 [[NEW]] section")
+    print("  4. NEW paper should reference OLD with **bold** only")
     sys.exit(1)
 
 
