@@ -370,6 +370,8 @@ print("Done - all pages extracted")  # 确认完成
 
 ### 4.2 创建 Vault Paper 文件
 
+> 🚨 **本节会触发自动 backlink，可能导致图谱方向错误**——索引完成后**必须**运行 `python tools/verify_graph_arrows.py` 验证方向。详见 §4.5。
+
 **仅使用以下两种方式之一，严禁同时使用两种方式（会导致同一 ID 生成两个文件）**。
 
 **方式 A（推荐）：通过 CLI 脚本调用 paper_index**
@@ -394,7 +396,7 @@ python "<skill_dir>/tools/index_paper.py" \
   --body_file "<tmp_body_file>.md"
 ```
 
-脚本自动完成 ID 分配、文件创建、ChromaDB 索引。输出 JSON 格式结果到 stdout。
+脚本自动完成 ID 分配、文件创建、ChromaDB 索引、自动 backlink 到 related_papers（**带时间线校验**：如果新论文比 vault 中已有论文更老，会跳过并警告）。输出 JSON 格式结果到 stdout。
 
 **方式 B（备选）：手动创建 Markdown 文件**
 
@@ -442,6 +444,14 @@ tags: [tag1, tag2]
 
 ### 4.5 跨论文关联
 
+> 🚨 **必读 — 时间线校验**（这是本 skill 中最容易出错、最关键的规则）
+>
+> **图谱箭头方向：旧论文 → 新论文**（学术影响流向）。**不是双向！**
+>
+> 当你**非按时间顺序**阅读时（例如先读了 2024 的 ReT，现在索引 2023 的 UniIR），脚本 `index_paper.py` 会**自动**给 vault 中已存在的论文（ReT）添加 `## 后续引用 [[UniIR]]` 段落——但这是**完全反向的**！必须按下面规则手动修正。
+
+**4.1 关联前必做：时间线校验**
+
 每当读完一篇新论文，检查是否可以与知识库中已有的论文建立关联：
 
 - **方法相似**：两篇论文使用或改进相似的方法
@@ -453,6 +463,8 @@ tags: [tag1, tag2]
 >
 > **CLI 脚本 `--related_papers` 默认假定"被索引的论文引用更早的论文"，不验证实际发表年份。如果在非时间顺序阅读时盲目使用，会导致图谱箭头方向错误（新论文指向旧论文）。**
 >
+> **⚠️ `index_paper.py` 现在的行为**：如果检测到 vault 中已存在的论文**比新索引的论文更新**（即非时间顺序阅读），脚本会**跳过自动 backlink 并打印警告**，提示你需要手动修正。
+>
 > 在建立关联前，必须执行以下步骤：
 >
 > 1. **提取年份**：获取当前论文的 `year`，以及每个关联候选论文的 `year`（从 vault 对应 `.md` 文件的 YAML frontmatter 读取）
@@ -461,9 +473,18 @@ tags: [tag1, tag2]
 >    - **旧论文** (年份更早) 的 body：**必须添加** `## 后续引用` 小节，包含指向新论文的 `[[wikilink]]`（形成 旧→新 的图谱箭头）
 >    - **新论文** (年份更晚) 的 body：引用旧论文时使用**加粗文本**（如 `**UniIR**`），**禁止**使用 wikilink（避免新→旧的反向边）
 >    - `related_papers` frontmatter 字段双向添加（无论是旧论文还是新论文，互加 ID）
-> 4. **核查**：完成关联后，逐对验证——旧论文的 `## 后续引用` 是否包含指向新论文的 `[[wikilink]]`？新论文的 body 是否没有指向旧论文的 wikilink？
+> 4. **核查**：完成关联后，运行 `python tools/verify_graph_arrows.py` 验证
+> 5. **如有违规**，手动修正：
+>    - 把误加的 `## 后续引用` 段落从新论文移到旧论文
+>    - 把新论文 body 中的 `[[OldPaper]]` wikilink 替换为 `**OldPaper**` bold
 >
-> **常见错误场景**：先读了一篇 2025 年的论文 (ReT)，后读了一篇 2023 年的论文 (UniIR)。在索引 UniIR 时，UniIR 年份更早，因此 UniIR 是旧论文——应在 UniIR.md 中添加 `## 后续引用 [[ReT]]`，而非在 ReT.md 中添加 `## 后续引用 [[UniIR]]`。
+> **常见错误场景**：先读了一篇 2024 年的论文 (ReT)，后读了一篇 2023 年的论文 (UniIR)。在索引 UniIR 时，UniIR 年份更早，因此 UniIR 是旧论文——应在 UniIR.md 中添加 `## 后续引用 [[ReT]]`，而非在 ReT.md 中添加 `## 后续引用 [[UniIR]]`。
+>
+> **自动化验证**（强烈推荐）：索引完成后运行
+> ```bash
+> python tools/verify_graph_arrows.py
+> ```
+> 该脚本会自动检查所有相关论文的图谱箭头方向，违反规则时返回 exit code 1 并列出所有问题。
 
 **关联方式**：
 1. 在**双方** paper 的 YAML frontmatter `related_papers` 字段中互加对方 ID

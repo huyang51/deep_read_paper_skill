@@ -109,11 +109,16 @@ def main():
 
         # Add reverse wikilinks from old papers → new paper so Obsidian graph
         # arrows show the direction of academic influence (old → new).
+        # NOTE: When reading papers NON-chronologically, the script will now
+        # warn and skip — manually fix the direction per SKILL.md §4.5.
         new_id = paper["id"]
         short_name = paper.get("short_name", "")
+        new_year = paper.get("year")
         related = paper.get("related_papers", [])
         if not args.paper_id and short_name and related:
-            add_backlinks_to_referenced_papers(new_id, short_name, related)
+            add_backlinks_to_referenced_papers(
+                new_id, short_name, related, new_paper_year=new_year
+            )
 
         result = {
             "status": "ok",

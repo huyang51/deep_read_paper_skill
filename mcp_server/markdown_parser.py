@@ -206,12 +206,18 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
 
 def add_backlinks_to_referenced_papers(new_paper_id: int, new_short_name: str,
                                          related_paper_ids: list[int],
-                                         papers_dir: Path = None) -> list[int]:
+                                         papers_dir: Path = None,
+                                         new_paper_year: int = None) -> list[int]:
     """Add reverse wikilinks from old referenced papers back to the new paper.
 
     Obsidian graph arrows point FROM the file containing a [[wikilink]] TO the
     target.  To achieve "old paper → new paper" direction (academic influence
     flow), we add [[new_short_name]] wikilinks inside each old paper's body.
+
+    **Important**: Graph arrows must be OLD → NEW. If the new paper is actually
+    OLDER than the existing paper (non-chronological reading), this function
+    will skip the backlink and emit a WARNING. The caller is responsible for
+    fixing the direction manually.
 
     Returns the list of paper IDs that were successfully updated.
     """
@@ -231,6 +237,30 @@ def add_backlinks_to_referenced_papers(new_paper_id: int, new_short_name: str,
         paper = get_paper_by_id(ref_id, papers_dir)
         if not paper:
             continue
+
+        # ⚠️ Timeline check: if existing paper is NEWER than the new paper,
+        # then existing paper should reference the new one with bold text
+        # (in body), NOT receive a [[new_short_name]] backlink (which would
+        # create a wrong-direction edge new→old).
+        existing_year = paper.get("year")
+        if new_paper_year is not None and existing_year is not None:
+            try:
+                if int(existing_year) > int(new_paper_year):
+                    print(
+                        f"[WARNING] Timeline mismatch: existing paper [{ref_id}] "
+                        f"{paper.get('short_name', '?')} (year {existing_year}) is "
+                        f"NEWER than the paper you just indexed "
+                        f"{new_short_name} (year {new_paper_year}). "
+                        f"Skipping auto-backlink to avoid wrong-direction graph edge.\n"
+                        f"  → Fix: the OLDER paper ({new_short_name}) should have a "
+                        f"## 后续引用 [[{paper.get('short_name', '?')}]] section, "
+                        f"and the NEWER paper ({paper.get('short_name', '?')}) should "
+                        f"reference {new_short_name} with bold text only.\n"
+                        f"  → See SKILL.md §4.5 '时间线校验' for details."
+                    )
+                    continue
+            except (ValueError, TypeError):
+                pass
 
         file_rel = paper.get("file", "")
         if not file_rel:
