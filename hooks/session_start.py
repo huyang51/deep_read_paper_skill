@@ -44,17 +44,25 @@ def main():
             pid = p.get("id", "?")
             lines.append(f"  - [{pid}] **{title}** ({date_read}): {contrib}")
 
-        lines.extend([
-            "",
-            "**可用 MCP tools**:",
-            "- `paper_search` — 语义搜索论文",
-            "- `paper_get` — 获取论文详情",
-            "- `paper_find_related` — 查找关联论文",
-            "- `paper_search_by_method` — 按方法类别搜索",
-            "- `paper_index` — 创建/更新论文条目",
-            "- `paper_remove` — 删除论文条目",
-            "- `paper_index_stats` — 知识库统计",
-        ])
+        # Dynamically load tool list from mcp_server (avoids drift if tools
+        # are added/removed in server.py).
+        try:
+            from mcp_server.server import TOOLS
+            lines.extend([
+                "",
+                "**可用 MCP tools**:",
+            ])
+            for t in TOOLS:
+                # First sentence of description (skip the "humanized" prefix)
+                desc = t["description"]
+                short = desc.split("。")[0] if "。" in desc else desc
+                lines.append(f"- `{t['name']}` — {short}")
+        except Exception:
+            # Fallback if mcp_server can't be imported
+            lines.extend([
+                "",
+                "**可用 MCP tools**: (run `python -m mcp_server` to see the full list)",
+            ])
         context = "\n".join(lines)
 
     output = {
