@@ -27,6 +27,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
 - 🔗 **Connect** papers automatically — discovers methodological, topical, and complementary relationships
+- ✅ **Verify** claims about other papers against OpenAlex/Semantic Scholar (`cite_verify`), and reports posterior impact via citation data (`paper_citations`) — external assertions never go unchecked into a report
 - 💡 **Innovate** via cross-paper research directions with concrete technical feasibility analysis
 
 > **TL;DR**: Point to a PDF and say "read this paper." Everything else happens automatically.
@@ -156,6 +157,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `project_dir` | ✅ | Your Claude Code project root — `paper-kb-deploy` auto-deploys config here |
 | `python_cmd` | ✅ | **Absolute path to the conda env's python** (e.g. `D:/Anaconda3/envs/paper-kb/python.exe` on Windows, `/opt/anaconda3/envs/paper-kb/bin/python` on Linux/Mac). Run `which python` inside the activated env to confirm. |
 | `embedding_model` | No | **Default: `paraphrase-multilingual-MiniLM-L12-v2`** (Chinese + English). For pure English only, switch to `all-MiniLM-L6-v2` |
+| `openalex_mailto` | No | Email for OpenAlex's polite pool (improves `cite_verify`/`paper_citations` rate limits). Optional but recommended |
 | `trigger_keywords_cn` | No | Chinese keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
 | `trigger_keywords_en` | No | English keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
 
@@ -201,6 +203,8 @@ Ask Claude Code directly:
 | `paper_find_related` | Find papers with methodological/topical/complementary relationships |
 | `paper_search_by_method` | Filter by method category |
 | `paper_index_stats` | Knowledge base statistics |
+| `cite_verify` | Verify claims about *other* papers against OpenAlex / Semantic Scholar (external fact-checking, anti-hallucination) |
+| `paper_citations` | Citation context of a paper: cited-by count, top citing works (posterior impact), reference list |
 
 ### Viewing Your Knowledge Graph
 
@@ -221,7 +225,7 @@ deep_read_paper_skill/
 ├── deploy.py                    # One-click deployment (`paper-kb-deploy`)
 ├── requirements.txt             # Dependencies (chromadb, pymupdf, watchfiles, pydantic)
 │
-├── mcp_server/                  # MCP Server (ChromaDB + 7 tools)
+├── mcp_server/                  # MCP Server (ChromaDB + 9 tools)
 │   ├── server.py                #   JSON-RPC main loop + tool dispatch
 │   ├── chroma_store.py          #   Vector index (create, search, update, delete)
 │   ├── markdown_parser.py       #   YAML frontmatter parser + auto backlinks
