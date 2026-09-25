@@ -27,6 +27,7 @@
 - 📝 **生成**含 LaTeX 公式、数据表、声明-证据对照的结构化中文解读报告
 - 💾 **记忆**到 Obsidian 兼容的知识库，含 YAML frontmatter、wikilinks 和 ChromaDB 向量索引
 - 🔗 **自动关联**论文——发现方法相似/领域相通/互补关系
+- ✅ **外部核验**——报告中关于其他论文的断言先经 OpenAlex/Semantic Scholar 验证（`cite_verify`），发表满 1 年的论文自动补"后验影响"（`paper_citations`）；核验不过就降级标注，杜绝张冠李戴
 - 💡 **创新建议**：跨论文研究方向，含具体技术可行性分析
 
 > **一句话**：指一下 PDF 说"读这篇论文"，剩下的一切自动完成。
@@ -155,6 +156,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `project_dir` | ✅ | Claude Code 项目根目录，`paper-kb-deploy` 自动将配置部署至此。 |
 | `python_cmd` | ✅ | **conda 环境中 python 的绝对路径**（如 Windows: `D:/Anaconda3/envs/paper-kb/python.exe`；Linux/Mac: `/opt/anaconda3/envs/paper-kb/bin/python`）。在激活的 conda 环境中执行 `which python` / `where python` 即可获取。 |
 | `embedding_model` | 否 | **默认: `paraphrase-multilingual-MiniLM-L12-v2`**（中英文双语）。若仅处理英文，可改用 `all-MiniLM-L6-v2`。 |
+| `openalex_mailto` | 否 | OpenAlex 礼貌池邮箱（提升 `cite_verify`/`paper_citations` 限流额度），可选但建议填 |
 | `trigger_keywords_cn` | 否 | 自动触发论文相关搜索提示的中文关键词（UserPromptSubmit hook）。 |
 | `trigger_keywords_en` | 否 | 自动触发论文相关搜索提示的英文关键词（UserPromptSubmit hook）。 |
 
@@ -202,6 +204,8 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `paper_find_related` | 查找方法/领域/互补关联论文 |
 | `paper_search_by_method` | 按方法类别检索 |
 | `paper_index_stats` | 获取知识库统计信息 |
+| `cite_verify` | 核验"关于其他论文"的断言是否存在（OpenAlex/S2，反幻觉） |
+| `paper_citations` | 论文外部引用脉络：被引数、Top 施引工作（后验影响）、参考文献列表 |
 
 ### 浏览知识图谱
 
@@ -222,7 +226,7 @@ deep_read_paper_skill/
 ├── deploy.py                    # 一键部署到你的项目（`paper-kb-deploy`）
 ├── requirements.txt             # Python 依赖
 │
-├── mcp_server/                  # MCP Server（ChromaDB 向量索引 + 7 个工具）
+├── mcp_server/                  # MCP Server（ChromaDB 向量索引 + 9 个工具）
 │   ├── server.py                #   JSON-RPC 主循环 + 工具调度
 │   ├── chroma_store.py          #   向量索引管理（增删改查）
 │   ├── markdown_parser.py       #   YAML frontmatter 解析 + 自动回链

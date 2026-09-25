@@ -11,7 +11,9 @@ from mcp_server.config import PAPERS_DIR
 from mcp_server.models import (
     SearchInput, GetPaperInput, FindRelatedInput, SearchByMethodInput,
     PaperIndexInput, PaperRemoveInput, ResponseFormat,
+    CiteVerifyInput, PaperCitationsInput,
 )
+from mcp_server import cite_api
 from mcp_server.markdown_parser import (
     get_paper_by_id, get_all_papers, extract_wikilinks,
     create_paper_file, delete_paper_file, parse_paper,
@@ -138,6 +140,44 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {}
+        }
+    },
+    {
+        "name": "cite_verify",
+        "description": (
+            "外部文献事实核验（OpenAlex/Semantic Scholar）。验证【关于其他论文】的断言是否真实"
+            "——写方法溯源（它基于X）、新颖性审计（同期工作有Y）、反事实检验（更强基线Z）之前必须调用。"
+            "返回 verdict: exact/probable/uncertain/not_found/network_error 及候选文献（含 venue/年份/引用数）。"
+            "uncertain/not_found 的断言禁止作为事实引用，须改写或标注【未核验——仅模型记忆】。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "被断言论文的标题（或 OpenAlex ID，如 W2741554522）"},
+                "author": {"type": "string", "description": "声称的第一作者/代表作者（可选，用于交叉核对）"},
+                "year": {"type": "integer", "description": "声称的发表年份（可选，±1 容忍）"},
+                "doi": {"type": "string", "description": "DOI（可选，优先精确解析）"},
+                "arxiv_id": {"type": "string", "description": "arXiv ID，如 1706.03762（可选）"}
+            }
+        }
+    },
+    {
+        "name": "paper_citations",
+        "description": (
+            "获取论文的外部引用脉络：被引总数、Top-K 引用它的工作（按被引排序）+ 最新引用者（后验影响）、"
+            "它自己的参考文献列表。读完后写报告 §4.11「后验影响」时调用；也可用于发现"
+            "「该论文后来被谁反驳/扩展」。支持 arXiv ID / DOI / OpenAlex ID / 标题解析。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "论文标题（无 ID 时用）"},
+                "arxiv_id": {"type": "string", "description": "arXiv ID"},
+                "doi": {"type": "string", "description": "DOI"},
+                "openalex_id": {"type": "string", "description": "OpenAlex ID（W 开头）"},
+                "n_citing": {"type": "integer", "default": 15, "description": "Top 引用工作数量（≤50）"},
+                "include_references": {"type": "boolean", "default": True, "description": "是否返回其参考文献列表"}
+            }
         }
     }
 ]
@@ -311,6 +351,36 @@ async def handle_index_stats(params: dict = None) -> str:
     return json.dumps(stats, ensure_ascii=False, indent=2)
 
 
+async def handle_cite_verify(params: dict) -> str:
+    try:
+        input_data = CiteVerifyInput(**params)
+    except Exception as e:
+        return json.dumps({"error": f"Invalid parameters: {e}"})
+    if not any((input_data.query, input_data.doi, input_data.arxiv_id)):
+        return json.dumps({"error": "至少提供 query / doi / arxiv_id 之一"})
+    result = await asyncio.to_thread(
+        cite_api.cite_verify,
+        query=input_data.query, author=input_data.author,
+        year=input_data.year, doi=input_data.doi, arxiv_id=input_data.arxiv_id)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+async def handle_paper_citations(params: dict) -> str:
+    try:
+        input_data = PaperCitationsInput(**params)
+    except Exception as e:
+        return json.dumps({"error": f"Invalid parameters: {e}"})
+    if not any((input_data.query, input_data.doi,
+                input_data.arxiv_id, input_data.openalex_id)):
+        return json.dumps({"error": "至少提供 query / doi / arxiv_id / openalex_id 之一"})
+    result = await asyncio.to_thread(
+        cite_api.paper_citations,
+        query=input_data.query, doi=input_data.doi, arxiv_id=input_data.arxiv_id,
+        openalex_id=input_data.openalex_id, n_citing=input_data.n_citing,
+        include_references=input_data.include_references)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 TOOL_DISPATCH = {
     "paper_search": handle_paper_search,
     "paper_get": handle_paper_get,
@@ -319,6 +389,8 @@ TOOL_DISPATCH = {
     "paper_index": handle_paper_index,
     "paper_remove": handle_paper_remove,
     "paper_index_stats": handle_index_stats,
+    "cite_verify": handle_cite_verify,
+    "paper_citations": handle_paper_citations,
 }
 
 

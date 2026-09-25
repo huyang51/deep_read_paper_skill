@@ -48,3 +48,20 @@ class PaperIndexInput(BaseModel):
 
 class PaperRemoveInput(BaseModel):
     paper_id: int = Field(description="要删除的论文ID")
+
+
+class CiteVerifyInput(BaseModel):
+    query: str = Field(default="", description="被断言论文的标题（或 OpenAlex ID）")
+    author: str = Field(default="", description="声称的代表作者（可选交叉核对）")
+    year: Optional[int] = Field(default=None, description="声称的发表年份（±1 容忍）")
+    doi: str = Field(default="", description="DOI（优先精确解析）")
+    arxiv_id: str = Field(default="", description="arXiv ID，如 1706.03762")
+
+
+class PaperCitationsInput(BaseModel):
+    query: str = Field(default="", description="论文标题（无 ID 时用）")
+    doi: str = Field(default="")
+    arxiv_id: str = Field(default="")
+    openalex_id: str = Field(default="")
+    n_citing: int = Field(default=15, ge=1, le=50, description="Top 引用工作数量")
+    include_references: bool = Field(default=True, description="是否返回其参考文献列表")

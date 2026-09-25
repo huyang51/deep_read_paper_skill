@@ -4,6 +4,7 @@
   "project_dir": "D:/my-papers",
   "python_cmd": "D:/Anaconda3/envs/paper-kb/python.exe",
   "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+  "openalex_mailto": "",
   "trigger_keywords_cn": ["论文", "文献", "paper", "paper reading", "深度阅读", "论文解读", "论文分析", "读论文"],
   "trigger_keywords_en": ["paper", "literature", "deep read", "paper reading", "paper analysis"]
 }
