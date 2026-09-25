@@ -208,13 +208,17 @@ def collect_candidate_rects(page):
     return rasters, vectors
 
 
-OVERLAP_TOL = 40.0  # a caption may sit ON the artwork's bottom edge (gap < 0)
+OVERLAP_TOL_CAP = 60.0  # max downward overlap (pt), scaled down for short clusters
 
 
 def _matching_ids(caption_rect, clusters, below: bool, max_gap):
     """All cluster ids that are (near) below/above the caption rect with
-    sufficient horizontal overlap. gap may be negative up to OVERLAP_TOL —
-    captions commonly overlap the last lines of a full-page figure artwork."""
+    sufficient horizontal overlap. gap may be NEGATIVE — captions commonly
+    sit INSIDE the artwork bbox's bottom edge (e.g. a background box drawn
+    below the caption). Real-world calibration (SR1 Fig 1, field run
+    2026-09-25): the caption overlapped the cluster by 42.8pt and the old
+    flat OVERLAP_TOL=40 missed it, so tolerance scales with cluster height:
+    tol = min(60pt, 0.5 * cluster_height)."""
     cx0, cy0, cx1, cy1 = caption_rect
     ids = []
     for ci, (lx0, ly0, lx1, ly1) in enumerate(clusters):
@@ -224,8 +228,9 @@ def _matching_ids(caption_rect, clusters, below: bool, max_gap):
         denom = min(cx1 - cx0, lx1 - lx0) or 1.0
         if overlap / denom < 0.35:
             continue
+        tol = min(OVERLAP_TOL_CAP, 0.5 * max(ly1 - ly0, 1.0))
         gap = (ly0 - cy1) if below else (cy0 - ly1)
-        if -OVERLAP_TOL <= gap <= max_gap:
+        if -tol <= gap <= max_gap:
             ids.append(ci)
     return ids
 
@@ -414,7 +419,25 @@ def extract_figures(pdf_path, outdir, pages=None, dpi=300.0, pad=6.0,
 
 
 def _write_manifest(manifest, outdir):
-    with open(Path(outdir) / "manifest.json", "w", encoding="utf-8") as f:
+    """Merge-into semantics (field run 2026-09-25, friction F2): a previous
+    manual re-crop used to OVERWRITE the auto manifest (6 figures lost).
+    Now: figures merge by png key (new wins), skipped list is kept from the
+    old manifest only when the new run produced none (manual runs have none)."""
+    path = Path(outdir) / "manifest.json"
+    if path.exists():
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            old = {}
+        same_pdf = old.get("pdf") == manifest.get("pdf")
+        if same_pdf and old.get("figures"):
+            merged = {f.get("png"): f for f in old["figures"] if f.get("png")}
+            merged.update({f.get("png"): f for f in manifest["figures"] if f.get("png")})
+            manifest["figures"] = sorted(
+                merged.values(), key=lambda f: (f.get("page", 0), f.get("png", "")))
+        if same_pdf and old.get("skipped") and not manifest.get("skipped"):
+            manifest["skipped"] = old["skipped"]
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
 

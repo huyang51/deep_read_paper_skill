@@ -144,6 +144,20 @@ def search_works(query: str, limit: int = 5):
     return [_brief(w) for w in (data or {}).get("results", [])], None
 
 
+def search_works_by_title(query: str, limit: int = 3):
+    """title.search filter fallback (friction F4, field evidence 2026-09-25):
+    OpenAlex free-text search sometimes fails to surface the exact-title
+    record at all (ReAct case). This filter matches on the title field only.
+    Coverage gaps remain on both endpoints — cite_verify flags those deferred."""
+    url = (f"{OPENALEX_BASE}/works?filter="
+           + urllib.parse.quote(f"title.search:{query}", safe=":")
+           + f"&per-page={limit}&select={WORK_SELECT}{_mailto()}")
+    data, err = _http_get_json_retry(url, tries=2, backoff=1.5)
+    if err:
+        return [], err
+    return [_brief(w) for w in (data or {}).get("results", [])], None
+
+
 def _work_by_url(path: str):
     url = f"{OPENALEX_BASE}/works/{path}?select={WORK_SELECT}{_mailto()}"
     return _http_get_json_retry(url, tries=2, backoff=1.5)
@@ -207,36 +221,80 @@ def cite_verify(query: str = "", author: str = "", year=None,
                "doi": _clean_doi(doi), "arxiv_id": arxiv_id}
     result = {"verdict": "not_found", "checked": checked, "matches": [], "notes": []}
 
-    matches, err = [], None
-    if doi or arxiv_id or re.fullmatch(r"W\d+", (query or "").strip()):
-        oid, work, err = resolve_openalex_id(
+    if not (query or "").strip() and not (doi or arxiv_id):
+        result["notes"].append("empty query")
+        return result
+
+    # Field run 2026-09-25 (friction F4): the identifier path used to be an
+    # either/or — a failed arXiv/DOI resolution (e.g. S2 rate-limited) SUPPRESSED
+    # the title-search fallback, so REAL papers verdicted not_found. Now every
+    # available signal contributes candidates independently, and only a total
+    # failure with zero candidates reports network_error.
+    matches, errs = [], []
+    wid_m = re.fullmatch(r"W\d+", (query or "").strip())
+    ident_given = bool(doi or arxiv_id)
+    ident_resolved = False
+    if doi or arxiv_id or wid_m:
+        oid, work, rerr = resolve_openalex_id(
             doi=doi, arxiv_id=arxiv_id,
-            openalex_id=query if re.fullmatch(r"W\d+", (query or "").strip()) else "")
+            openalex_id=wid_m.group(0) if wid_m else "")
+        if rerr:
+            errs.append(rerr)
         if work:
-            matches = [_brief(work)]
-        elif not err:
-            # resolved to an id without a work payload (arXiv title-fallback
-            # path): re-search by the claimed title to build candidates
-            matches, err = search_works(query, limit=5)
-    else:
-        if not (query or "").strip():
-            result["verdict"] = "not_found"
-            result["notes"].append("empty query")
-            return result
-        # Two merged searches (OpenAlex free-text degrades when the author is
-        # appended, and its plain relevance is noisy — a title-lookalike can
-        # rank first). Client-side (sim, author, year) ranking fixes both.
-        matches, err = search_works(query, limit=10)
+            matches.append(_brief(work))
+        if oid and not work:
+            # arXiv title-fallback path returns a bare id — fetch the payload
+            # too, or the resolution success contributes no candidate at all.
+            w2, e2 = _work_by_url(f"openalex:{oid}")
+            if w2:
+                matches.append(_brief(w2))
+            elif e2:
+                errs.append(e2)
+        if oid or work:
+            ident_resolved = True  # id mapped to a record (even without payload)
+    if (query or "").strip():
+        found, serr = search_works(query, limit=10)
+        if serr:
+            errs.append(serr)
+        seen = {m["openalex_id"] for m in matches}
+        matches += [f for f in found if f["openalex_id"] not in seen]
         if author:
-            extra, err2 = search_works(f"{query} {author}", limit=5)
+            # OpenAlex free-text search degrades badly when the author is
+            # appended, and plain relevance is noisy (title-lookalikes rank
+            # first): the author-query pass only TOPS UP candidates, and the
+            # author/year cross-check happens client-side below.
+            extra, serr2 = search_works(f"{query} {author}", limit=5)
+            if serr2:
+                errs.append(serr2)
             seen = {m["openalex_id"] for m in matches}
             matches += [m for m in extra if m["openalex_id"] not in seen]
-            err = err or err2
 
-    if err and not matches:
+    if not matches and errs:
         result["verdict"] = "network_error"
-        result["notes"].append(err)
+        result["notes"].append(errs[0])
         return result
+
+    # Coverage-gap fallback (friction F4): if no strong title candidate
+    # surfaced, try the title.search filter before concluding.
+    if (query or "").strip() and not any(
+            title_similarity(query, m["title"]) >= 0.75 for m in matches):
+        tfound, terr = search_works_by_title(query)
+        if terr:
+            errs.append(terr)
+        seen = {m["openalex_id"] for m in matches}
+        matches += [t for t in tfound if t["openalex_id"] not in seen]
+
+    # An identifier is a strong anchor: if it was supplied yet no candidate
+    # reaches 0.75 title similarity, provider flakiness (intermittent S2 429
+    # windows, OpenAlex coverage gaps observed live 2026-09-25) is the likely
+    # cause — never let that masquerade as "this citation is fake".
+    strong = any(title_similarity((query or "").strip() or " ",
+                                   m["title"]) >= 0.75 for m in matches)
+    if ident_given and (not ident_resolved or not strong):
+        result["notes"].append(
+            "identifier given but lookup incomplete (OpenAlex coverage gap or "
+            "Semantic Scholar rate-limit window); a weak verdict here means "
+            "DEFER AND RETRY, not 'claim is fake'.")
 
     q = query or (matches[0]["title"] if matches else "")
 

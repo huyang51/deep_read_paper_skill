@@ -159,9 +159,58 @@ class CiteVerifyTest(Patched):
 
     def test_network_error_verdict(self):
         cite_api._http_get_json = make_router(
-            fail={"api.openalex.org": "URLError: unreachable"})
+            fail={"api.openalex.org": "URLError: unreachable",
+                  "semanticscholar": "URLError: unreachable"})
         r = cite_api.cite_verify(query="Anything at all")
         self.assertEqual(r["verdict"], "network_error")
+
+    def test_identifier_failure_still_searches_title(self):
+        """Regression (field run 2026-09-25, friction F4): an arXiv id that
+        cannot resolve (S2 rate-limited) used to SUPPRESS the OpenAlex title
+        search fallback, so a real paper verdicted not_found/network_error.
+        Candidates must now accumulate from every available signal."""
+        self.route(fail={"semanticscholar": "HTTP 404 s2 miss"},
+                   search_payload=[PARODY, REAL])  # doi probe → 404; title search hits
+        r = cite_api.cite_verify(query="Attention is All You Need",
+                                 author="Vaswani", year=2017,
+                                 arxiv_id="1706.03762")
+        self.assertEqual(r["verdict"], "exact")
+        self.assertEqual(r["matches"][0]["openalex_id"], "W2626778328")
+
+    def test_empty_inputs(self):
+        self.route(search_payload=[])
+        r = cite_api.cite_verify()
+        self.assertEqual(r["verdict"], "not_found")
+        self.assertIn("empty query", r["notes"])
+
+    def test_title_filter_fallback_rescues_weak_candidates(self):
+        """friction F4: free-text search returns only lookalikes (all sim<0.75)
+        → title.search filter pass must run and can surface the real record."""
+        def router(url, timeout=20):
+            if "filter=title.search" in url:
+                return {"results": [REAL]}, None
+            if "/works?search=" in url:
+                return {"results": [PARODY]}, None
+            return None, "HTTP 404"
+        cite_api._http_get_json = router
+        r = cite_api.cite_verify(query="Attention is All You Need",
+                                 author="Vaswani", year=2017)
+        self.assertEqual(r["verdict"], "exact")
+        self.assertEqual(r["matches"][0]["openalex_id"], "W2626778328")
+
+    def test_unresolved_identifier_flagged_for_defer(self):
+        """friction F4: id given but unresolvable + weak candidates → the note
+        must tell the caller this is DEFER-AND-RETRY, not a refutation."""
+        def router(url, timeout=20):
+            if "semanticscholar" in url:
+                return None, "HTTP 429 rate limited"
+            if "/works?search=" in url:
+                return {"results": [IRRELEVANT]}, None
+            return None, "HTTP 404"
+        cite_api._http_get_json = router
+        r = cite_api.cite_verify(query="Attention is All You Need",
+                                 arxiv_id="1706.99999")
+        self.assertTrue(any("DEFER AND RETRY" in n for n in r["notes"]))
 
     def test_doi_lookup(self):
         self.route(work=REAL)
@@ -214,6 +263,35 @@ class PaperCitationsTest(Patched):
                                  author="Vaswani", arxiv_id="1706.03762")
         self.assertIn(r["verdict"], ("exact", "probable"))
         self.assertTrue(r["matches"])
+
+    def test_cite_verify_uses_oid_refetched_payload(self):
+        """Regression (friction F4 residual): when the arXiv route resolves an
+        id WITHOUT a work payload, cite_verify must refetch by that id —
+        free-text search alone leaves only lookalikes (field ReAct case)."""
+        import copy
+        s2 = {"title": "Attention Is All You Need",   # no DOI in externalIds
+              "externalIds": {"ArXiv": "1706.03622"}}
+
+        def router(url, timeout=20):
+            if "semanticscholar" in url:
+                return copy.deepcopy(s2), None
+            if "/works?search=" in url:
+                # resolve()'s internal title pass (capital "Is") sees REAL;
+                # cite_verify's own query search sees only the lookalike
+                return {"results": [copy.deepcopy(REAL)
+                                    if "Is+All" in url
+                                    else copy.deepcopy(PARODY)]}, None
+            if "doi:10.48550" in url:
+                return None, "HTTP 404"               # old arXiv: no registered DOI
+            if "/works/openalex:" in url:
+                return copy.deepcopy(REAL), None      # the refetch under test
+            return None, "HTTP 404"
+
+        cite_api._http_get_json = router
+        r = cite_api.cite_verify(query="Attention is All You Need",
+                                 author="Vaswani", arxiv_id="1706.03762")
+        self.assertEqual(r["verdict"], "exact")
+        self.assertEqual(r["matches"][0]["openalex_id"], "W2626778328")
 
     def test_arxiv_via_s2_without_doi_uses_title_search(self):
         """Old arXiv papers lack a DOI: S2 gives title, we resolve via search."""
