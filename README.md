@@ -231,14 +231,17 @@ deep_read_paper_skill/
 │   ├── markdown_parser.py       #   YAML frontmatter parser + auto backlinks
 │   ├── cross_refs.py            #   Cross-paper relationship discovery
 │   ├── config.py                #   Reads settings.json
-│   └── models.py                #   Pydantic I/O models
+│   ├── models.py                #   Pydantic I/O models
+│   └── cite_api.py              #   OpenAlex/Semantic Scholar fact-checking client
 │
 ├── hooks/                       # Claude Code Hooks
 │   ├── session_start.py         #   Injects recent paper summaries on session start
 │   └── user_prompt_submit.py    #   Keyword-triggered search hints
 │
 ├── tools/
-│   └── index_paper.py           #   CLI paper indexer
+│   ├── index_paper.py           #   CLI paper indexer
+│   ├── extract_figures.py       #   Geometry-based figure cropping (visual channel)
+│   └── verify_graph_arrows.py   #   Post-index graph direction check
 │
 ├── vault-template/              # Obsidian vault starter kit
 │   ├── .obsidian/               #   Graph + properties + Dataview config
@@ -363,6 +366,7 @@ Yes — modify the workflow in `SKILL.md`. Update the report template in `refere
 | `pydantic` | ≥2.0 | MCP tool schema validation |
 | `watchfiles` | ≥0.20 | Auto-index on file changes |
 | `PyMuPDF` | ≥1.23 | PDF text extraction (used by Claude Code) |
+| `sentence-transformers` | ≥2.2 | Embedding backend for the multilingual model (the default) — required by ChromaDB's embedding function |
 
 All pure Python — clean install on Linux, macOS, Windows.
 

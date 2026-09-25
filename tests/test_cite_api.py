@@ -203,6 +203,18 @@ class PaperCitationsTest(Patched):
         self.assertEqual(c["cited_by_count"], 55000)
         self.assertEqual(len(c["top_citing"]), 1)
 
+    def test_cite_verify_via_arxiv_reaches_search_branch(self):
+        """Regression (periphery audit 2026-09-25): arxiv_id resolving through
+        the S2-title path returns no work payload — cite_verify must fall
+        through to a title search (branch previously raised TypeError)."""
+        s2 = {"title": "Attention Is All You Need",
+              "externalIds": {"ArXiv": "1706.03762"}}
+        self.route(s2_paper=s2, search_payload=[PARODY, REAL])
+        r = cite_api.cite_verify(query="Attention is All You Need",
+                                 author="Vaswani", arxiv_id="1706.03762")
+        self.assertIn(r["verdict"], ("exact", "probable"))
+        self.assertTrue(r["matches"])
+
     def test_arxiv_via_s2_without_doi_uses_title_search(self):
         """Old arXiv papers lack a DOI: S2 gives title, we resolve via search."""
         s2 = {"title": "Attention Is All You Need",

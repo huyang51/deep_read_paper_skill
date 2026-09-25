@@ -42,7 +42,7 @@
 | 论文孤岛，看不到全局脉络 | Obsidian 知识图谱的跨论文关联 |
 | LLM 摘要肤浅，缺少深度 | 十一维分析：5 个理解维度 + 3 个审稿人维度 + 3 个深度理解维度 |
 | 换项目就丢知识 | 可移植 Obsidian vault，独立于 Claude Code |
-| 找不到三个月前读的论文 | ChromaDB 语义搜索 + 7 个 MCP 工具 |
+| 找不到三个月前读的论文 | ChromaDB 语义搜索 + 9 个 MCP 工具（含外部引用核验） |
 
 ---
 
@@ -232,14 +232,17 @@ deep_read_paper_skill/
 │   ├── markdown_parser.py       #   YAML frontmatter 解析 + 自动回链
 │   ├── cross_refs.py            #   跨论文关联发现
 │   ├── config.py                #   读取 settings.json
-│   └── models.py                #   Pydantic 输入输出模型
+│   ├── models.py                #   Pydantic 输入输出模型
+│   └── cite_api.py              #   OpenAlex/Semantic Scholar 外部核验客户端
 │
 ├── hooks/                       # Claude Code Hooks
 │   ├── session_start.py         #   会话启动时注入最近论文摘要
 │   └── user_prompt_submit.py    #   关键词检测 → 触发检索提示
 │
 ├── tools/
-│   └── index_paper.py           #   命令行论文索引工具
+│   ├── index_paper.py           #   命令行论文索引工具
+│   ├── extract_figures.py       #   几何裁剪图片提取（视觉通道）
+│   └── verify_graph_arrows.py   #   索引后图谱方向校验
 │
 ├── vault-template/              # Obsidian vault 模板
 │   ├── .obsidian/               #   图谱 + 属性面板 + Dataview 预设
@@ -364,6 +367,7 @@ PyMuPDF 无法从扫描/图片型 PDF 中提取文字。需先用 OCR 工具（�
 | `pydantic` | ≥2.0 | MCP 工具 schema 校验 |
 | `watchfiles` | ≥0.20 | 文件变化自动增量索引 |
 | `PyMuPDF` | ≥1.23 | PDF 文本提取（由 Claude Code 直接调用） |
+| `sentence-transformers` | ≥2.2 | 多语言 embedding 模型（默认）的加载后端，ChromaDB embedding function 依赖 |
 
 全部为纯 Python，在 Linux、macOS、Windows 上均可安装。
 

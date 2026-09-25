@@ -215,8 +215,9 @@ def cite_verify(query: str = "", author: str = "", year=None,
         if work:
             matches = [_brief(work)]
         elif not err:
-            works, err = search_works(query, author=author)
-            matches = works
+            # resolved to an id without a work payload (arXiv title-fallback
+            # path): re-search by the claimed title to build candidates
+            matches, err = search_works(query, limit=5)
     else:
         if not (query or "").strip():
             result["verdict"] = "not_found"
