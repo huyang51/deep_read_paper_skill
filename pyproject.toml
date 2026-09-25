@@ -1,0 +1,35 @@
+# Packaging metadata for `pip install -e .` / `pip install .`
+#
+# Design notes:
+# - The runtime does NOT require this package to be installed: the deployed
+#   .mcp.json runs `python -m mcp_server` with cwd = skill repo dir, and the
+#   hooks do `sys.path.insert(SKILL_DIR)`. Installing exists to (a) pull in
+#   dependencies in one command and (b) expose the `paper-kb-deploy` command.
+# - Prefer `pip install -e .` (editable): deploy.py locates templates/ and
+#   settings.json relative to the repo; a non-editable install copies
+#   deploy.py to site-packages where those files don't exist.
+# - Dependencies are read from requirements.txt (single source of truth).
+# - Version is read from mcp_server/__init__.py:__version__.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deep-read-paper-skill"
+dynamic = ["version", "dependencies"]
+description = "Deep academic paper reading skill for Claude Code with a persistent Obsidian + ChromaDB knowledge vault"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+
+[project.scripts]
+paper-kb-deploy = "deploy:main"
+
+[tool.setuptools]
+py-modules = ["deploy"]
+packages = ["mcp_server"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mcp_server.__version__" }
+dependencies = { file = ["requirements.txt"] }

@@ -103,10 +103,11 @@ cd deep_read_paper_skill
 conda create -n paper-kb python=3.10 -y
 conda activate paper-kb
 
-# 3. 在激活的 conda 环境中安装依赖
-pip install -r requirements.txt
+# 3. 在激活的 conda 环境中安装 skill（一次性装齐全部依赖）
+pip install -e .
 
-# 4. 编辑 settings.json（填写 3 个必填项）
+# 4. 由模板创建并编辑 settings.json（填写 3 个必填项）
+cp settings.example.json settings.json
 # - vault_dir:   存储报告和记忆条目的目录
 # - project_dir: 你的 Claude Code 项目根目录
 # - python_cmd:  conda 环境中 python 的**绝对路径**，例如
@@ -116,7 +117,7 @@ pip install -r requirements.txt
 #                或 `where python`（Windows）可获取该路径。
 
 # 5. 部署到你的项目（仍在 conda 环境中）
-python setup.py
+paper-kb-deploy            # 或：python deploy.py
 
 # 6. （可选）初始化 Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
@@ -150,7 +151,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `vault_dir` | ✅ | 知识库路径。报告、记忆条目和向量索引存储于此。 |
-| `project_dir` | ✅ | Claude Code 项目根目录，`setup.py` 自动将配置部署至此。 |
+| `project_dir` | ✅ | Claude Code 项目根目录，`paper-kb-deploy` 自动将配置部署至此。 |
 | `python_cmd` | ✅ | **conda 环境中 python 的绝对路径**（如 Windows: `D:/Anaconda3/envs/paper-kb/python.exe`；Linux/Mac: `/opt/anaconda3/envs/paper-kb/bin/python`）。在激活的 conda 环境中执行 `which python` / `where python` 即可获取。 |
 | `embedding_model` | 否 | **默认: `paraphrase-multilingual-MiniLM-L12-v2`**（中英文双语）。若仅处理英文，可改用 `all-MiniLM-L6-v2`。 |
 | `trigger_keywords_cn` | 否 | 自动触发论文相关搜索提示的中文关键词（UserPromptSubmit hook）。 |
@@ -213,8 +214,10 @@ cp -r vault-template/ /your/knowledge-base/path/
 ```
 deep_read_paper_skill/
 ├── SKILL.md                     # Skill 定义（Claude Code 读取）
-├── settings.json                # ⭐ 唯一需要编辑的配置文件
-├── setup.py                     # 一键部署到你的项目
+├── settings.json                # ⭐ 唯一需要编辑的配置文件（由 settings.example.json 复制）
+├── settings.example.json        # 上项模板（随仓库分发）
+├── pyproject.toml               # 打包元数据（`pip install -e .`）
+├── deploy.py                    # 一键部署到你的项目（`paper-kb-deploy`）
 ├── requirements.txt             # Python 依赖
 │
 ├── mcp_server/                  # MCP Server（ChromaDB 向量索引 + 7 个工具）
@@ -241,7 +244,7 @@ deep_read_paper_skill/
 │   ├── report_template.md
 │   └── memory_entry_template.md
 │
-└── output/                      # setup.py 生成（自动部署）
+└── output/                      # deploy.py 生成（自动部署）
 ```
 
 ### Vault 结构（用户数据）
@@ -333,7 +336,7 @@ PyMuPDF 无法从扫描/图片型 PDF 中提取文字。需先用 OCR 工具（�
 
 1. 将 skill 文件夹复制到每台机器
 2. 更新各机器的 `settings.json` 路径
-3. 运行 `python setup.py`
+3. 运行 `paper-kb-deploy`
 4. 用 Git 或共享盘同步 vault 目录
 </details>
 

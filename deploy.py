@@ -1,26 +1,19 @@
-"""deep_read_paper_skill — package setup + config generator.
+"""deep_read_paper_skill — config generator & deployer (formerly setup.py).
 
-This file does TWO things:
+This script ONLY generates/deploys configuration. Package installation and
+dependency management live in `pyproject.toml` (`pip install -e .`).
 
-1. **Package installation** (via `pip install -e .` or `pip install .`):
-   - Reads dependencies from `requirements.txt`
-   - Installs the `mcp_server` package as a Python module
-   - This is REQUIRED for the hooks/templates (which run `python -m mcp_server`)
-
-2. **Config generation** (via `python setup.py` or `python -m setup`):
-   - Renders templates/.mcp.json and templates/.claude-settings.json
-     with the actual SKILL_DIR / PYTHON_CMD paths
-   - Outputs to output/ (or auto-deploys to project_dir if set)
+What it does:
+  1. Reads `settings.json` from the skill directory (copy `settings.example.json`
+     to get started).
+  2. Renders `templates/.mcp.json` and `templates/.claude-settings.json`
+     with actual SKILL_DIR / PYTHON_CMD paths into `output/`.
+  3. If `project_dir` is set in settings.json, also copies the rendered files
+     to `<project_dir>/.mcp.json` and `<project_dir>/.claude/settings.json`.
 
 Usage:
-  # Step 1: install package + deps
-  pip install -e .
-
-  # Step 2: edit config
-  $EDITOR settings.json   # Fill in vault_dir, project_dir, python_cmd
-
-  # Step 3: generate configs
-  python setup.py
+  paper-kb-deploy          # after `pip install -e .`
+  python deploy.py         # or directly from the repo, no install needed
 """
 import json
 import re
@@ -31,42 +24,26 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SKILL_DIR / "output"
 TEMPLATES_DIR = SKILL_DIR / "templates"
+SETTINGS_FILE = SKILL_DIR / "settings.json"
+SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
 
 
-# ─── Package metadata (used when running `pip install .`) ──────────────────
-
-def _read_requirements() -> list[str]:
-    """Read requirements.txt and parse each line, stripping comments and extras."""
-    req_file = SKILL_DIR / "requirements.txt"
-    if not req_file.exists():
-        return []
-    requirements = []
-    for line in req_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # Remove inline comments
-        line = line.split("#", 1)[0].strip()
-        if line:
-            requirements.append(line)
-    return requirements
-
-
-# ─── Config generation ──────────────────────────────────────────────────────
-
-def load_settings():
-    settings_file = SKILL_DIR / "settings.json"
-    if not settings_file.exists():
-        print(f"[ERROR] Cannot find {settings_file}")
+def load_settings() -> dict:
+    if not SETTINGS_FILE.exists():
+        example = SETTINGS_EXAMPLE.name if SETTINGS_EXAMPLE.exists() else "settings.example.json"
+        print(f"[ERROR] Cannot find {SETTINGS_FILE}")
+        print()
+        print(f"  This file is git-ignored, so a fresh clone does not contain it.")
+        print(f"  Create it first:")
+        print(f"      cp {example} settings.json")
+        print(f"  Then edit the 3 required fields: vault_dir, project_dir, python_cmd,")
+        print(f"  and re-run this command.")
         sys.exit(1)
 
-    with open(settings_file, "r", encoding="utf-8") as f:
+    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
         raw = json.load(f)
 
-    settings = {}
-    for k, v in raw.items():
-        if not k.startswith("_"):
-            settings[k] = v
+    settings = {k: v for k, v in raw.items() if not k.startswith("_")}
 
     if not settings.get("vault_dir"):
         print("[ERROR] settings.json: vault_dir is required and cannot be empty.")
@@ -74,7 +51,6 @@ def load_settings():
         print("  Example: \"D:/Paper_read/knowledge-base\"")
         sys.exit(1)
 
-    import shutil
     python_cmd = settings.get("python_cmd", "python")
     if shutil.which(python_cmd) is None:
         print(f"[WARN] python_cmd '{python_cmd}' is not on PATH;")
@@ -91,7 +67,7 @@ def render_template(template_path: Path, variables: dict) -> str:
     for key, val in sorted(variables.items(), key=lambda kv: -len(kv[0])):
         content = content.replace("{{" + key + "}}", str(val))
 
-    unreplaced = set(re.findall(r'\{\{(\w+)\}\}', content))
+    unreplaced = set(re.findall(r"\{\{(\w+)\}\}", content))
     if unreplaced:
         print(f"  [WARN] Unreplaced placeholders in {template_path.name}: {unreplaced}")
 
@@ -103,6 +79,13 @@ def generate_config():
     print("  deep_read_paper_skill -- config generator")
     print("=" * 55)
     print()
+
+    if not TEMPLATES_DIR.exists():
+        print(f"[ERROR] Templates not found at {TEMPLATES_DIR}")
+        print("  You are likely running the console script from a NON-editable install")
+        print("  (site-packages copy). Use `pip install -e .`, or run")
+        print("  `python deploy.py` from a clone of the skill repository.")
+        sys.exit(1)
 
     settings = load_settings()
 
@@ -158,5 +141,9 @@ def generate_config():
     print("=" * 55)
 
 
-if __name__ == "__main__":
+def main():
     generate_config()
+
+
+if __name__ == "__main__":
+    main()

@@ -3,11 +3,13 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+build/
+dist/
 
 # User configuration (contains personal paths)
 settings.json
 
-# Generated output (from setup.py)
+# Generated output (from deploy.py / paper-kb-deploy)
 output/
 
 # OS
