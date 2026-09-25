@@ -47,5 +47,5 @@ PAPERS_DIR = VAULT_DIR / "papers"
 REPORTS_DIR = VAULT_DIR / "reports"
 INSIGHTS_DIR = VAULT_DIR / "insights"
 CHROMA_DIR = VAULT_DIR / ".chromadb"
-EMBEDDING_MODEL = _load_config_val("embedding_model", "all-MiniLM-L6-v2")
+EMBEDDING_MODEL = _load_config_val("embedding_model", "paraphrase-multilingual-MiniLM-L12-v2")
 COLLECTION_NAME = "paper_memories"

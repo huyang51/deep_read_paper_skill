@@ -149,6 +149,7 @@ TOOLS = [
             "——写方法溯源（它基于X）、新颖性审计（同期工作有Y）、反事实检验（更强基线Z）之前必须调用。"
             "返回 verdict: exact/probable/uncertain/not_found/network_error 及候选文献（含 venue/年份/引用数）。"
             "uncertain/not_found 的断言禁止作为事实引用，须改写或标注【未核验——仅模型记忆】。"
+            "参数：query / doi / arxiv_id 至少提供一个。"
         ),
         "inputSchema": {
             "type": "object",
@@ -165,8 +166,9 @@ TOOLS = [
         "name": "paper_citations",
         "description": (
             "获取论文的外部引用脉络：被引总数、Top-K 引用它的工作（按被引排序）+ 最新引用者（后验影响）、"
-            "它自己的参考文献列表。读完后写报告 §4.11「后验影响」时调用；也可用于发现"
-            "「该论文后来被谁反驳/扩展」。支持 arXiv ID / DOI / OpenAlex ID / 标题解析。"
+            "它自己的参考文献列表。读完后写报告 §4.10「后验影响」时调用；也可用于发现"
+            "「该论文后来被谁反驳/扩展」。支持 arXiv ID / DOI / OpenAlex ID / 标题解析；"
+            "query / doi / arxiv_id / openalex_id 至少提供一个。"
         ),
         "inputSchema": {
             "type": "object",
