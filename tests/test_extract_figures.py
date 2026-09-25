@@ -248,6 +248,54 @@ class ExtractIntegrationTest(unittest.TestCase):
         self.assertIn("栅格示意图", raw)  # caption text preserved, not escaped
 
 
+class AnchorToleranceTest(unittest.TestCase):
+    """Regression (field run 2026-09-25, friction F1): SR1 Fig 1's caption sat
+    42.8pt INSIDE the artwork bbox; the old flat OVERLAP_TOL=40 missed it.
+    Tolerance now scales with cluster height: min(60pt, 0.5*h)."""
+
+    def test_deep_overlap_anchors_on_tall_cluster(self):
+        clusters = [(100, 100, 380, 360)]  # h=260 → tol=60; caption overlaps by 42.8
+        cap = {"kind": "figure", "key": "1", "rect": (110, 317.2, 390, 339),
+               "text": "Figure 1: deep-overlapped caption"}
+        g = ef.anchor_captions([cap], clusters)
+        self.assertEqual(g["1"]["cluster_ids"], {0})
+
+    def test_short_cluster_still_rejects_deep_overlap(self):
+        clusters = [(100, 100, 380, 140)]  # h=40 → tol=20; overlap -30 exceeds
+        cap = {"kind": "figure", "key": "1", "rect": (110, 110, 390, 132),
+               "text": "Figure 1: caption inside short bar"}
+        g = ef.anchor_captions([cap], clusters)
+        self.assertEqual(g["1"]["cluster_ids"], set())
+
+
+class ManifestMergeTest(unittest.TestCase):
+    """Regression (friction F2): a manual --rect run used to OVERWRITE the
+    auto manifest in the same outdir, silently losing every auto figure."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.pdf = Path(cls.tmp.name) / "synthetic.pdf"
+        build_pdf(cls.pdf)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_manual_appends_to_auto_manifest(self):
+        out = Path(tempfile.mkdtemp(dir=self.tmp.name))
+        m1 = ef.extract_figures(self.pdf, out)
+        n1 = len(m1["figures"])
+        self.assertGreaterEqual(n1, 3)
+        m2 = ef.extract_figures(self.pdf, out, manual=(1, (120, 120, 380, 300), "m9"))
+        names = {f["png"] for f in m2["figures"]}
+        self.assertIn("synthetic_m9.png", names)
+        self.assertEqual(len(m2["figures"]), n1 + 1)
+        import json
+        disk = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(disk["figures"]), n1 + 1)
+
+
 class CliTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

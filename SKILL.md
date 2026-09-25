@@ -95,7 +95,10 @@ description: |-
 **关键警告**：Windows 下 Python 的 `sys.stdout` 默认使用 GBK 编码，**严禁使用 `print()` 直接输出 PDF 文本**（会导致 UnicodeEncodeError 使提取中断，部分页面丢失）。必须写入文件：
 
 ```python
-import fitz, os
+import fitz, os, sys
+# Windows GBK 防护同样适用于辅助脚本自身（2026-09-25 实战中两次因缺此行打印含
+# 特殊字符文本而中断）：任何 print 前必须加
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 pdf_path = r"<pdf_path>"
 out_dir = r"<vault_dir>/.extract_tmp"  # 隐藏子目录，避免污染 vault 根
 os.makedirs(out_dir, exist_ok=True)
@@ -200,6 +203,7 @@ python "<skill_dir>/tools/extract_figures.py" \
 > 2. 按返回的 `verdict` 处理：
 >    - `exact` / `probable` → 断言后标注核验出处：`[外部核验: <venue>, <year>, 被引 <N>]`
 >    - `uncertain` / `not_found` → **禁止作为事实写入**。要么改写为论文原文确实支撑的表述，要么显式降级标注 `【未核验——仅模型记忆】`
+>    - ⚠️ 特例（实战教训）：notes 含 `identifier unresolved`（常见于 arXiv 早期论文：OpenAlex 覆盖缺口 + S2 限流）时，`not_found` **不是反证**——按 DEFER 处理：换标识符（去作者重试/补 DOI）或稍后再试一轮；仍失败才降级【未核验】，且报告标注"外部库覆盖有限"
 >    - `network_error` → 标注 `【外部核验不可用】`，流程继续，不得凭空补全
 > 3. 论文发表满 1 年以上时，对**当前论文本身**调用 `paper_citations` 填写报告 §4.10"后验影响"（谁在引用、有无扩展/质疑迹象——只允许基于返回的施引工作标题/venue 陈述，**禁止**推断编造"复现失败"之类结论）。arXiv 论文优先传 `arxiv_id`；若返回解析失败提示（S2 限流），改用 `query=<论文完整标题>` 重试。
 
@@ -696,7 +700,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 3. **数学密集型论文**：如果论文极度数学化（如纯理论 ML 论文），方法解读部分侧重数学直觉而非逐公式推导
 4. **记忆维护**：阅读 5 篇以上论文后，回顾更新早期论文的 `related_papers` frontmatter，并确认系统自动添加的 `## 后续引用` wikilinks 正确
 5. **完成报告**：全部阶段完成后，仅回复"完成"，不附加任何过程检查项（如"无 Read 调用、无编码错误、无重复文件"等）。**deep 档的"完成"以双 QA 通过为前提**；若有未决项，回复"完成（有未决项，见验收记录）"并给一行摘要
-6. **档位与并行纪律**：分诊结论告知后直接执行不等待确认；deep 档五组任务卡必须**同一条消息内并行派发**（勿串行，串行会退化为成本优势全无的假编排）；`.dimcards/` 保留不删（供 Phase 5 与未来复用）
+6. **档位与并行纪律**：分诊结论告知后直接执行不等待确认；deep 档五组任务卡必须**同一条消息内并行派发**（勿串行，串行会退化为成本优势全无的假编排）；派发前完成 `orchestration_prompts.md`"派发前必做"四条（绝对路径 / 主会话先亲验关键图并注入观察记录 / 外部断言台账补验 / 页码契约）；`.dimcards/` 保留不删（供 Phase 5 与未来复用）
 7. **HTML 是构建产物**：`reports/*.html` 由 `render_report.py` 生成，**禁止手工编辑**；md 报告任何修改后必须重跑渲染同步
 
 ## 参考资源
