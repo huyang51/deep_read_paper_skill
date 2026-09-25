@@ -103,10 +103,11 @@ cd deep_read_paper_skill
 conda create -n paper-kb python=3.10 -y
 conda activate paper-kb
 
-# 3. Install dependencies (inside the activated conda env)
-pip install -r requirements.txt
+# 3. Install the skill (pulls in all dependencies in one go)
+pip install -e .
 
-# 4. Edit ONE file: settings.json
+# 4. Create + edit ONE file: settings.json
+cp settings.example.json settings.json
 # Fill in vault_dir, project_dir, python_cmd (3 required fields)
 # - vault_dir:   where to store reports and memory entries
 # - project_dir: your Claude Code project root
@@ -117,7 +118,7 @@ pip install -r requirements.txt
 #                inside the activated env to confirm the path.
 
 # 5. Deploy to your project (still inside the conda env)
-python setup.py
+paper-kb-deploy            # or: python deploy.py
 
 # 6. (Optional) Initialize Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
@@ -151,7 +152,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | Field | Required | Description |
 |-------|----------|-------------|
 | `vault_dir` | ✅ | Where reports, memory entries, and ChromaDB index are stored |
-| `project_dir` | ✅ | Your Claude Code project root — `setup.py` auto-deploys config here |
+| `project_dir` | ✅ | Your Claude Code project root — `paper-kb-deploy` auto-deploys config here |
 | `python_cmd` | ✅ | **Absolute path to the conda env's python** (e.g. `D:/Anaconda3/envs/paper-kb/python.exe` on Windows, `/opt/anaconda3/envs/paper-kb/bin/python` on Linux/Mac). Run `which python` inside the activated env to confirm. |
 | `embedding_model` | No | **Default: `paraphrase-multilingual-MiniLM-L12-v2`** (Chinese + English). For pure English only, switch to `all-MiniLM-L6-v2` |
 | `trigger_keywords_cn` | No | Chinese keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
@@ -212,8 +213,10 @@ Open the vault directory in Obsidian:
 ```
 deep_read_paper_skill/
 ├── SKILL.md                     # Skill definition (Claude Code reads this)
-├── settings.json                # ⭐ The ONLY file you need to edit
-├── setup.py                     # One-click deployment
+├── settings.json                # ⭐ The ONLY file you need to edit (create from settings.example.json)
+├── settings.example.json        # Template for the above (tracked in git)
+├── pyproject.toml               # Package metadata (`pip install -e .`)
+├── deploy.py                    # One-click deployment (`paper-kb-deploy`)
 ├── requirements.txt             # Dependencies (chromadb, pymupdf, watchfiles, pydantic)
 │
 ├── mcp_server/                  # MCP Server (ChromaDB + 7 tools)
@@ -240,7 +243,7 @@ deep_read_paper_skill/
 │   ├── report_template.md
 │   └── memory_entry_template.md
 │
-└── output/                      # setup.py output (auto-deployed)
+└── output/                      # deploy.py output (auto-deployed)
 ```
 
 ### Vault Structure (Generated User Data)
@@ -332,7 +335,7 @@ PyMuPDF cannot extract text from image-based PDFs. Pre-process with OCR tools (e
 
 1. Copy the skill folder to each machine
 2. Update `settings.json` paths
-3. Run `python setup.py`
+3. Run `paper-kb-deploy`
 4. Sync the vault directory with Git or a shared drive
 </details>
 
