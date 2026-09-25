@@ -41,6 +41,7 @@ class PaperIndexInput(BaseModel):
     novelty_level: str = Field(default="", description="新颖性定级: incremental | substantial | breakthrough")
     related_papers: list[int] = Field(default_factory=list)
     date_read: str = Field(default="", description="阅读日期 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$|^$")
+    read_mode: str = Field(default="standard", pattern=r"^(quick|standard|deep)$", description="Phase 0 分诊档位")
     aliases: list[str] = Field(default_factory=list, description="别名列表（用于 Obsidian 图谱显示和搜索）")
     tags: list[str] = Field(default_factory=list)
     body: str = Field(default="", description="论文结构化摘要 body（Markdown）")

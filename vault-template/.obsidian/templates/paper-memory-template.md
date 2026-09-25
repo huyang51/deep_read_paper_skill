@@ -25,6 +25,7 @@ core_contribution: "一句话核心贡献"
 novelty_level: incremental | substantial | breakthrough
 related_papers: []
 date_read: YYYY-MM-DD
+read_mode: quick | standard | deep   # Phase 0 分诊档位（与 references/memory_entry_template.md 同步）
 aliases: ["别名1", "别名2"]
 tags: [tag1, tag2]
 ---

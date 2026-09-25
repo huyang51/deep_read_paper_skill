@@ -21,6 +21,7 @@ English | <a href="README_CN.md">简体中文</a>
 
 **Deep Read Paper Skill** transforms Claude Code into a **personal AI research assistant** that reads, analyzes, and remembers academic papers. It's not just a PDF summarizer — it's a complete paper knowledge management system:
 
+- 🎚️ **Triage** every paper in ~2 minutes (Keshav pass-1 style) into quick / standard / deep — long or core papers get **orchestrated deep reading**: 5 parallel dimension agents, cross-view contradiction detection with arbitration, and two independent QA gates (fact auditor + comprehension auditor) before the report is allowed to ship
 - 📄 **Read** any academic paper PDF page-by-page (never skips content)
 - 🖼️ **See** the figures — the text channel (page-by-page) and a visual channel (geometry-cropped figures, vision-checked, embedded in reports) work together
 - 🧠 **Analyze** across 11 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk) + 3 deep-understanding (counterfactual verification, implicit assumptions audit, **synthesis judgment**)
@@ -178,13 +179,14 @@ Read this paper: "D:/papers/SayPlan - 2023 - Grounding LLMs using 3D Scene Graph
 ```
 
 The skill automatically:
-1. Extracts all pages via PyMuPDF (never skips — even appendices)
-2. Crops figures to high-DPI PNGs (geometry-based) — vision-checks them and embeds the core ones in the report
-3. Performs 11-dimension deep analysis
-4. Generates a Chinese interpretation report → `reports/<short_name>_解读报告.md`
-5. Creates a structured memory entry → `papers/<short_name>.md`
-6. Indexes into ChromaDB for semantic search
-7. Runs cross-paper comparison and creates insight files (if related papers exist)
+1. Triages the paper (~2 min, Keshav pass-1) into quick / standard / deep — quick stops at a 5C flash card
+2. Extracts all pages via PyMuPDF (never skips — even appendices)
+3. Crops figures to high-DPI PNGs (geometry-based) — vision-checks them and embeds the core ones in the report
+4. Performs 11-dimension deep analysis (deep tier: 5 parallel agents + contradiction arbitration)
+5. Passes two independent QA gates (fact auditor + comprehension auditor), then generates the Chinese report → `reports/<short_name>_解读报告.md`
+6. Creates a structured memory entry → `papers/<short_name>.md` (with `read_mode` recorded)
+7. Indexes into ChromaDB for semantic search
+8. Runs cross-paper comparison and creates insight files (if related papers exist)
 
 ### Searching Your Knowledge Base
 
