@@ -8,3 +8,5 @@ PyMuPDF>=1.23,<2.0
 # Required by ChromaDB's SentenceTransformerEmbeddingFunction when using a
 # non-default embedding model (e.g., paraphrase-multilingual-MiniLM-L12-v2).
 sentence-transformers>=2.2,<4.0
+# Report → HTML renderer (tools/render_report.py); pure Python.
+markdown>=3.4,<4.0

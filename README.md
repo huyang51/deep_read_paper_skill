@@ -24,6 +24,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 🎚️ **Triage** every paper in ~2 minutes (Keshav pass-1 style) into quick / standard / deep — long or core papers get **orchestrated deep reading**: 5 parallel dimension agents, cross-view contradiction detection with arbitration, and two independent QA gates (fact auditor + comprehension auditor) before the report is allowed to ship
 - 📄 **Read** any academic paper PDF page-by-page (never skips content)
 - 🖼️ **See** the figures — the text channel (page-by-page) and a visual channel (geometry-cropped figures, vision-checked, embedded in reports) work together
+- 🖥️ **Share** every finished report as a standalone HTML reading view (KaTeX math, auto TOC sidebar, embedded figures, dark mode, print-ready) — generated from the Markdown, never hand-written
 - 🧠 **Analyze** across 11 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk) + 3 deep-understanding (counterfactual verification, implicit assumptions audit, **synthesis judgment**)
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
@@ -243,6 +244,7 @@ deep_read_paper_skill/
 ├── tools/
 │   ├── index_paper.py           #   CLI paper indexer
 │   ├── extract_figures.py       #   Geometry-based figure cropping (visual channel)
+│   ├── render_report.py         #   md report → standalone HTML reading view
 │   └── verify_graph_arrows.py   #   Post-index graph direction check
 │
 ├── vault-template/              # Obsidian vault starter kit
@@ -262,7 +264,7 @@ deep_read_paper_skill/
 ```
 <vault_dir>/
 ├── papers/          # Structured paper memory (.md with YAML + wikilinks)
-├── reports/         # Full Chinese interpretation reports (embed figure crops)
+├── reports/         # Full Chinese reports (.md + auto-rendered .html reading view, figure crops embedded)
 ├── insights/        # Cross-paper innovation insights (auto-generated)
 ├── attachments/     # Per-paper figure crops (<short_name>/*.png + manifest.json)
 ├── index.md         # Dataview dynamic index
@@ -369,6 +371,7 @@ Yes — modify the workflow in `SKILL.md`. Update the report template in `refere
 | `watchfiles` | ≥0.20 | Auto-index on file changes |
 | `PyMuPDF` | ≥1.23 | PDF text extraction (used by Claude Code) |
 | `sentence-transformers` | ≥2.2 | Embedding backend for the multilingual model (the default) — required by ChromaDB's embedding function |
+| `markdown` | ≥3.4 | md → HTML report rendering (`tools/render_report.py`) |
 
 All pure Python — clean install on Linux, macOS, Windows.
 

@@ -24,6 +24,7 @@
 - 🎚️ **分诊档位**：2 分钟判定每篇论文的读取深度（速览/标准/深读）。长论文与核心论文自动进入**编排深读**：5 组维度子代理并行 + 跨视角矛盾检测与仲裁 + 双独立 QA 验收（事实审计 + 可理解性审计），报告过关才算完成
 - 📄 **逐页阅读**论文 PDF，绝不跳过任何内容（含附录）
 - 🖼️ **图文双通道**：文字通道负责全文覆盖与数字溯源，视觉通道按 PDF 坐标几何裁剪图表、逐张视觉核验后嵌入报告——不再"只读文字不看图"
+- 🖥️ **HTML 阅读视图**：每份定稿报告自动渲染为独立 HTML（KaTeX 公式、侧边目录、嵌入原图、暗色模式、打印友好）——由 Markdown 确定性生成，可直接分享给合作者
 - 🧠 **十一维深度分析**：5 个理解维度（问题溯源、方法溯源、通俗解读、实验分析、局限性）+ 3 个审稿人维度（新颖性审计、失败案例、拒稿风险）+ 3 个深度理解维度（反事实检验、隐含假设审计、综合判断）
 - 📝 **生成**含 LaTeX 公式、数据表、声明-证据对照的结构化中文解读报告
 - 💾 **记忆**到 Obsidian 兼容的知识库，含 YAML frontmatter、wikilinks 和 ChromaDB 向量索引
@@ -244,6 +245,7 @@ deep_read_paper_skill/
 ├── tools/
 │   ├── index_paper.py           #   命令行论文索引工具
 │   ├── extract_figures.py       #   几何裁剪图片提取（视觉通道）
+│   ├── render_report.py         #   md 报告 → 独立 HTML 阅读视图
 │   └── verify_graph_arrows.py   #   索引后图谱方向校验
 │
 ├── vault-template/              # Obsidian vault 模板
@@ -263,7 +265,7 @@ deep_read_paper_skill/
 ```
 <vault_dir>/
 ├── papers/          # 论文结构化记忆（.md 含 YAML + wikilinks）
-├── reports/         # 完整中文解读报告（嵌入原图裁剪）
+├── reports/         # 完整中文报告（.md + 自动渲染的同名 .html 阅读视图，嵌入原图）
 ├── insights/        # 跨论文创新洞察（自动生成）
 ├── attachments/     # 每篇论文的图表裁剪（<short_name>/*.png + manifest.json）
 ├── index.md         # Dataview 动态索引
@@ -370,6 +372,7 @@ PyMuPDF 无法从扫描/图片型 PDF 中提取文字。需先用 OCR 工具（�
 | `watchfiles` | ≥0.20 | 文件变化自动增量索引 |
 | `PyMuPDF` | ≥1.23 | PDF 文本提取（由 Claude Code 直接调用） |
 | `sentence-transformers` | ≥2.2 | 多语言 embedding 模型（默认）的加载后端，ChromaDB embedding function 依赖 |
+| `markdown` | ≥3.4 | md → HTML 报告渲染（`tools/render_report.py`） |
 
 全部为纯 Python，在 Linux、macOS、Windows 上均可安装。
 
