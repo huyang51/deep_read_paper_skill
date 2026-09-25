@@ -11,6 +11,7 @@ Usage:
     --keywords "kw1,kw2,kw3" \
     --core_contribution "One-sentence contribution" \
     --date_read "2026-05-15" \
+    --read_mode "deep" \
     --tags "tag1,tag2" \
     --body_file "/path/to/body.md"
 
@@ -51,6 +52,7 @@ def main():
     parser.add_argument("--novelty_level", default="", choices=["", "incremental", "substantial", "breakthrough"], help="Novelty level: incremental | substantial | breakthrough")
     parser.add_argument("--related_papers", default="", help="Comma-separated related paper IDs")
     parser.add_argument("--date_read", default=date.today().isoformat(), help="Read date YYYY-MM-DD")
+    parser.add_argument("--read_mode", default="standard", choices=["quick", "standard", "deep"], help="Phase-0 triage mode recorded in frontmatter")
     parser.add_argument("--aliases", default="", help="Comma-separated aliases for Obsidian graph display and search")
     parser.add_argument("--tags", default="", help="Comma-separated tags")
     parser.add_argument("--body_file", required=True, help="Path to file containing body markdown")
@@ -88,6 +90,7 @@ def main():
         "novelty_level": args.novelty_level,
         "related_papers": related,
         "date_read": args.date_read,
+        "read_mode": args.read_mode,
         "aliases": aliases,
         "tags": tags,
         "body": body,
