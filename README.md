@@ -22,6 +22,7 @@ English | <a href="README_CN.md">简体中文</a>
 **Deep Read Paper Skill** transforms Claude Code into a **personal AI research assistant** that reads, analyzes, and remembers academic papers. It's not just a PDF summarizer — it's a complete paper knowledge management system:
 
 - 📄 **Read** any academic paper PDF page-by-page (never skips content)
+- 🖼️ **See** the figures — the text channel (page-by-page) and a visual channel (geometry-cropped figures, vision-checked, embedded in reports) work together
 - 🧠 **Analyze** across 11 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk) + 3 deep-understanding (counterfactual verification, implicit assumptions audit, **synthesis judgment**)
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
@@ -48,7 +49,7 @@ English | <a href="README_CN.md">简体中文</a>
 
 ```mermaid
 graph TD
-    A["User: Read this paper + PDF"] --> B["Phase 1: PDF Extraction"]
+    A["User: Read this paper + PDF"] --> B["Phase 1: page-by-page text + figure crops"]
     B --> C["Phase 2: 10-Dimension Analysis"]
     C --> D["Phase 3: Report Generation"]
     C --> E["Phase 4: Memory Entry"]
@@ -176,11 +177,12 @@ Read this paper: "D:/papers/SayPlan - 2023 - Grounding LLMs using 3D Scene Graph
 
 The skill automatically:
 1. Extracts all pages via PyMuPDF (never skips — even appendices)
-2. Performs 11-dimension deep analysis
-3. Generates a Chinese interpretation report → `reports/<short_name>_解读报告.md`
-4. Creates a structured memory entry → `papers/<short_name>.md`
-5. Indexes into ChromaDB for semantic search
-6. Runs cross-paper comparison and creates insight files (if related papers exist)
+2. Crops figures to high-DPI PNGs (geometry-based) — vision-checks them and embeds the core ones in the report
+3. Performs 11-dimension deep analysis
+4. Generates a Chinese interpretation report → `reports/<short_name>_解读报告.md`
+5. Creates a structured memory entry → `papers/<short_name>.md`
+6. Indexes into ChromaDB for semantic search
+7. Runs cross-paper comparison and creates insight files (if related papers exist)
 
 ### Searching Your Knowledge Base
 
@@ -251,8 +253,9 @@ deep_read_paper_skill/
 ```
 <vault_dir>/
 ├── papers/          # Structured paper memory (.md with YAML + wikilinks)
-├── reports/         # Full Chinese interpretation reports
+├── reports/         # Full Chinese interpretation reports (embed figure crops)
 ├── insights/        # Cross-paper innovation insights (auto-generated)
+├── attachments/     # Per-paper figure crops (<short_name>/*.png + manifest.json)
 ├── index.md         # Dataview dynamic index
 └── .chromadb/       # Vector database (auto-managed)
 ```
