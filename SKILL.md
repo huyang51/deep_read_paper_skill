@@ -59,6 +59,7 @@ description: |-
 - [ ] §2.8 方法深入讲解已完成（伪代码/复杂度/数值细节/边界情形）——报告不止通俗版；训练资源账本已填（原文交代值或带出处的区间估算）
 - [ ] §4.10 后验影响已由 `paper_citations` 数据填写（或标注外部核验不可用）
 - [ ] （deep 档）双 QA 已执行且通过，未决项如实写入"✅ 验收记录"节；维度间矛盾全部经仲裁或显式记录，无静默择一
+- [ ] HTML 阅读视图已渲染（`reports/<短名>_解读报告.html`，与 md 同名同目录；deep 档须在 QA 通过后）
 - [ ] 让一个**不熟悉该子领域**的研究生读完后，能在不看原文的情况下复述出方法的核心机制
 
 > **违反这条原则 = 报告失败**。技术深度不等于术语堆砌——能用大白话讲清楚才是真功夫。
@@ -440,6 +441,20 @@ REWORK 项由主会话修复后**只复审该条**，同一项最多 2 轮；仍
 
 报告保存到 vault 的 `reports/` 目录下，文件名为 `{short_name}_解读报告.md`（如 `ReT_解读报告.md`）。如 vault 不可用，保存到用户指定的位置。
 
+### 3.6 HTML 阅读视图渲染（standard/deep 完成后执行）
+
+md 报告落盘后（deep 档必须在**双 QA 通过、定稿之后**）渲染配套 HTML：
+
+```bash
+python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_解读报告.md"
+```
+
+- 输出与 md **同名同目录**的 `.html`：图片相对路径（`../attachments/...`）原样有效，零拷贝
+- 自带：frontmatter 元信息卡、侧边目录（h2/h3 自动生成）、KaTeX 公式渲染（CDN）、表格/引用块/代码样式、暗色模式与打印样式、`[[wikilink]]` 转样式化文本
+- 用户明确要"离线可开的版本"时加 `--offline`（公式显示为源码，其余不受影响）
+- 渲染失败（退出码 1）不阻塞完成流程：修复 md 后重试，或如实告知用户 HTML 未生成
+- quick 档速览卡默认不渲染
+
 ---
 
 ## Phase 4: 记忆系统
@@ -682,6 +697,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 4. **记忆维护**：阅读 5 篇以上论文后，回顾更新早期论文的 `related_papers` frontmatter，并确认系统自动添加的 `## 后续引用` wikilinks 正确
 5. **完成报告**：全部阶段完成后，仅回复"完成"，不附加任何过程检查项（如"无 Read 调用、无编码错误、无重复文件"等）。**deep 档的"完成"以双 QA 通过为前提**；若有未决项，回复"完成（有未决项，见验收记录）"并给一行摘要
 6. **档位与并行纪律**：分诊结论告知后直接执行不等待确认；deep 档五组任务卡必须**同一条消息内并行派发**（勿串行，串行会退化为成本优势全无的假编排）；`.dimcards/` 保留不删（供 Phase 5 与未来复用）
+7. **HTML 是构建产物**：`reports/*.html` 由 `render_report.py` 生成，**禁止手工编辑**；md 报告任何修改后必须重跑渲染同步
 
 ## 参考资源
 
@@ -689,5 +705,6 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 记忆条目模板：`references/memory_entry_template.md`
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3；单元测试：`tests/test_extract_figures.py`）
 - 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`，离线测试 `tests/test_cite_api.py`；使用规则见 Phase 2"外部断言核验"）
+- HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → 同名 .html，KaTeX/目录/嵌图；测试 `tests/test_render_report.py`；用法见 Phase 3.6）
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）
 - Deep 档编排任务卡：`references/orchestration_prompts.md`（五组维度卡 + 装配矛盾检测 + QA-1/QA-2 + 仲裁卡；仅 deep 档加载）
