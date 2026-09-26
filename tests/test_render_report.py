@@ -121,6 +121,36 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(rr.main(["--md", str(self.md.parent / "nope.md")]), 1)
 
+    # ---------- v2 design chrome (Tufte/VitePress/pangu) ----------
+
+    def test_booktabs_wrapping_and_chrome(self):
+        h = self._h()
+        self.assertIn('<div class="tw"><table>', h)     # horizontal-scroll wrap
+        self.assertIn('class="para"', h)                 # ¶ heading anchors
+        self.assertIn("阅读约", h)                        # reading-time badge
+        self.assertIn("<figure>", h)                     # figure + figcaption
+        self.assertIn('id="progress"', h)                # reading progress bar
+        self.assertIn('id="toc-fab"', h)                 # mobile TOC drawer
+        self.assertIn('id="zoom"', h)                    # click-to-zoom overlay
+        self.assertIn("sec-warn", rr.build_toc_and_ids(
+            "<h2>⚠️ 矛盾与仲裁记录</h2>")[1])            # warn-tinted section
+
+    def test_pangu_spacing_and_exemptions(self):
+        TS = chr(0x2009)
+        self.assertEqual(rr._pangu_text("汉字x测试"),
+                         f"汉字{TS}x{TS}测试")
+        self.assertEqual(rr._pangu_text("约80词"), f"约{TS}80{TS}词")
+        out = rr._pangu_text("在<code>code内x字</code>中end")
+        self.assertIn("<code>code内x字</code>", out)      # span untouched…
+        self.assertIn(f"中{TS}end", out)                  # …text around still spaced
+        out = rr._pangu_text("公式$2\\pi r$旁")
+        self.assertIn("$2\\pi r$", out)                    # math body pristine
+        self.assertIn(TS, out)
+        # regression (2026-09-26 review): the bare-tag branch must not eat
+        # <code> before the span alternative gets a chance
+        out = rr._pangu_text("<code>a内b</code>")
+        self.assertEqual(out, "<code>a内b</code>")
+
 
 class FakeCurrencyTest(unittest.TestCase):
     def test_dollar_amounts_not_greedy(self):
