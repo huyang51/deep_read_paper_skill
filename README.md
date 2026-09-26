@@ -21,7 +21,7 @@ English | <a href="README_CN.md">简体中文</a>
 
 **Deep Read Paper Skill** transforms Claude Code into a **personal AI research assistant** that reads, analyzes, and remembers academic papers. It's not just a PDF summarizer — it's a complete paper knowledge management system:
 
-- 🎚️ **Triage** every paper in ~2 minutes (Keshav pass-1 style) into quick / standard / deep — long or core papers get **orchestrated deep reading**: 5 parallel dimension agents, cross-view contradiction detection with arbitration, and two independent QA gates (fact auditor + comprehension auditor) before the report is allowed to ship
+- 🎚️ **Triage** every paper in ~2 minutes (Keshav pass-1 style) into quick / standard / ultra — standard reads the whole paper in one full-context pass (1M-token windows make multi-agent fan-out unnecessary for normal papers) behind a single fresh-eyes QA gate; only 60+ page reports/surveys get the 3-agent orchestrated tier with cross-view contradiction arbitration
 - 📄 **Read** any academic paper PDF page-by-page (never skips content)
 - 🖼️ **See** the figures — the text channel (page-by-page) and a visual channel (geometry-cropped figures, vision-checked, embedded in reports) work together
 - 🖥️ **Share** every finished report as a standalone HTML reading view (KaTeX math, auto TOC sidebar, embedded figures, dark mode, print-ready) — generated from the Markdown, never hand-written
@@ -180,11 +180,11 @@ Read this paper: "D:/papers/SayPlan - 2023 - Grounding LLMs using 3D Scene Graph
 ```
 
 The skill automatically:
-1. Triages the paper (~2 min, Keshav pass-1) into quick / standard / deep — quick stops at a 5C flash card
+1. Triages the paper (~2 min, Keshav pass-1) into quick / standard / ultra — quick stops at a 5C flash card, standard is the default
 2. Extracts all pages via PyMuPDF (never skips — even appendices)
 3. Crops figures to high-DPI PNGs (geometry-based) — vision-checks them and embeds the core ones in the report
-4. Performs 11-dimension deep analysis (deep tier: 5 parallel agents + contradiction arbitration)
-5. Passes two independent QA gates (fact auditor + comprehension auditor), then generates the Chinese report → `reports/<short_name>_解读报告.md`
+4. Performs 11-dimension deep analysis in one full-context pass (ultra tier: 3 parallel agents + contradiction arbitration)
+5. Clears one unified QA gate (fresh-eyes agent: fact sampling + readability), then generates the Chinese report → `reports/<short_name>_解读报告.md`
 6. Creates a structured memory entry → `papers/<short_name>.md` (with `read_mode` recorded)
 7. Indexes into ChromaDB for semantic search
 8. Runs cross-paper comparison and creates insight files (if related papers exist)

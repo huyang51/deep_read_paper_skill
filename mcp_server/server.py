@@ -116,7 +116,7 @@ TOOLS = [
                 "novelty_level": {"type": "string", "default": "", "description": "新颖性定级: incremental | substantial | breakthrough"},
                 "related_papers": {"type": "array", "items": {"type": "integer"}, "default": [], "description": "关联论文ID列表"},
                 "date_read": {"type": "string", "default": "", "description": "阅读日期 YYYY-MM-DD"},
-                "read_mode": {"type": "string", "enum": ["quick", "standard", "deep"], "default": "standard", "description": "Phase 0 分诊档位：quick 速览卡 | standard 单上下文精读 | deep 编排精读+双QA"},
+                "read_mode": {"type": "string", "enum": ["quick", "standard", "deep"], "default": "standard", "description": "Phase 0 分诊档位：quick 速览卡 | standard 默认档（单上下文一遍通读+统一QA）| deep=超长档（>60页三组编排+矛盾检测+统一QA）"},
                 "aliases": {"type": "array", "items": {"type": "string"}, "default": [], "description": "别名列表（用于 Obsidian 图谱显示和搜索）"},
                 "tags": {"type": "array", "items": {"type": "string"}, "default": [], "description": "标签列表"},
                 "body": {"type": "string", "default": "", "description": "论文结构化摘要正文（Markdown，含wikilinks）"}
