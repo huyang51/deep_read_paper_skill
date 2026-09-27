@@ -125,7 +125,7 @@ class RenderTest(unittest.TestCase):
 
     def test_booktabs_wrapping_and_chrome(self):
         h = self._h()
-        self.assertIn('<div class="tw"><table>', h)     # horizontal-scroll wrap
+        self.assertIn('<div class="tw" data-cols="3" data-cards="1"><table>', h)
         self.assertIn('class="para"', h)                 # ¶ heading anchors
         self.assertIn("阅读约", h)                        # reading-time badge
         self.assertIn("<figure>", h)                     # figure + figcaption
@@ -134,6 +134,25 @@ class RenderTest(unittest.TestCase):
         self.assertIn('id="zoom"', h)                    # click-to-zoom overlay
         self.assertIn("sec-warn", rr.build_toc_and_ids(
             "<h2>⚠️ 矛盾与仲裁记录</h2>")[1])            # warn-tinted section
+
+    def test_no_table_tag_corruption(self):
+        """regression (2026-09-26): a cell regex that captured only the `t` of
+        `<td>` re-emitted `<d>`, collapsing every table into run-on text."""
+        import re as _re
+        h = self._h()
+        self.assertEqual(_re.findall(r"</?[dh]>", h), [])
+        self.assertIn("<td", h)
+        self.assertIn("<th", h)
+
+    def test_cell_attributes_preserved(self):
+        """`class`/`data-label` must survive the rewrite, not be replaced."""
+        import re as _re
+        h = self._h()
+        row = _re.search(r'<tr><td[^>]*><span class="cv">Baseline.*?</tr>', h).group(0)
+        self.assertIn('class="k"', row)                  # label column
+        self.assertIn('data-label="方法"', row)           # mobile card labels
+        self.assertIn('data-label="R@5"', row)
+        self.assertIn('class="num"', row)                # numeric alignment
 
     def test_pangu_spacing_and_exemptions(self):
         TS = chr(0x2009)
@@ -152,6 +171,258 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(out, "<code>a内b</code>")
 
 
+class ChromeV21Test(unittest.TestCase):
+    """glance card / numeric-column alignment / heading-rail cleanup /
+    \\(..\\) \\[..\\] delimiter normalization."""
+
+    MD = """---
+title: "Chrome Test"
+read_mode: standard
+---
+
+```
+╔══════╗
+║ 📌 30秒速览
+║ 问题: RAG是单轮检索，学不会中途查询
+║ 方法: πθ(y|x;R) 把引擎写进RL目标
+╚══════╝
+```
+
+| 方法 | NQ | Avg |
+|------|----|-----|
+| RAG | 0.349 | 0.304 |
+| SR1 | 0.480 | 0.431 |
+
+## ━━━ 1. 问题背景 ━━━
+
+奖励 $r\\in\\{0,1\\}$ 与块级
+\\[r_\\phi(x,y)=\\mathrm{EM}(a_{pred},a_{gold})\\]
+收尾。
+
+## ━━━ ⚠️ 矛盾记录 ━━━
+
+无。
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        md = Path(cls.tmp.name) / "c.md"
+        md.write_text(cls.MD, encoding="utf-8")
+        cls.h = rr.render_report(md).read_text(encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_glance_card(self):
+        self.assertIn('<div class="glance">', self.h)
+        self.assertIn("<dt>问题</dt>", self.h)
+        self.assertNotIn("╔", self.h)
+
+    def test_numeric_columns(self):
+        self.assertIn('class="num"', self.h)
+        # first column (方法名) must NOT be right-aligned
+        import re as _re
+        first_cells = _re.findall(r'<td([^>]*)><span class="cv">RAG', self.h)
+        self.assertEqual(len(first_cells), 1)
+        self.assertNotIn("num", first_cells[0])
+
+    def test_heading_rails_stripped_and_tinted(self):
+        import re as _re
+        h2s = _re.findall(r"<h2[^>]*>.*?</h2>", self.h, _re.DOTALL)
+        self.assertTrue(all("━" not in x for x in h2s))
+        self.assertTrue(any("sec-warn" in x for x in h2s))
+
+    def test_delimiter_normalization(self):
+        art = self.h.split("<article>")[1].split("</article>")[0]
+        self.assertNotIn("\\[", art)                 # \[…\] became an element
+        self.assertNotIn("$$", art)                  # and so did $$…$$
+        # the TeX is the element's text content: no $ delimiters to mis-read
+        self.assertIn('<span class="math-block">r_\\phi(x,y)=', art)
+        self.assertIn('<span class="math-inline">r\\in\\{0,1\\}</span>', art)
+
+    # ---------- math pipeline ----------
+
+    def test_math_is_text_content_not_attribute(self):
+        """No-JS fallback: the reader sees the TeX itself, never `$…$`."""
+        import re as _re
+        art = self.h.split("<article>")[1].split("</article>")[0]
+        spans = _re.findall(r'<span class="math-(?:inline|block)">(.*?)</span>',
+                            art, _re.DOTALL)
+        self.assertTrue(spans)
+        for s in spans:
+            self.assertFalse(s.startswith("$") or s.endswith("$"))
+            self.assertNotIn("$$", s)
+        self.assertIn("r_\\phi(x,y)=", " ".join(spans))
+
+    def test_nested_stash_is_spliced_not_leaked(self):
+        """`$\\begin{bmatrix}…\\end{bmatrix}$` — the env rule used to stash the
+        inside of the dollar span first, leaving sentinel `M0005b` in the
+        prose."""
+        md = ("矩阵 $" + chr(92) + "begin{bmatrix} a & b " + chr(92) * 2 +
+              " c & d " + chr(92) + "end{bmatrix}$ 收。\n")
+        guarded, store = rr.protect_math(md)
+        out = rr.restore_math(guarded, store)
+        self.assertNotIn("\x00", out)
+        self.assertEqual(out.count('<span class="math-inline">'), 1)
+        self.assertIn("\\begin{bmatrix}", out)
+
+    def test_literal_dollar_inside_math_stays_escaped(self):
+        guarded, store = rr.protect_math("价格 $\\text{\\$5}$ 与文字\n")
+        out = rr.restore_math(guarded, store)
+        self.assertIn("\\text{\\$5}", out)           # KaTeX needs the backslash
+        self.assertNotIn("\x01", out)
+
+
+class TexSanitizeTest(unittest.TestCase):
+    """LaTeX that LLMs emit and KaTeX rejects, plus the numbering trap."""
+
+    def test_label_and_bm_mapped(self):
+        self.assertEqual(rr._sanitize_tex("\\bm{W} x"), "\\boldsymbol{W} x")
+        self.assertNotIn("\\label", rr._sanitize_tex("x \\label{eq:1} y"))
+        self.assertNotIn("\\nonumber", rr._sanitize_tex("x \\nonumber y"))
+        self.assertNotIn("eq:1", rr._sanitize_tex("x \\label{eq:1} y"))
+
+    def test_ams_envs_lose_their_auto_numbers(self):
+        """KaTeX numbers every row of `align`/`equation` itself — `(1)`, `(2)`,
+        restarting in each block — while the prose cites the paper's numbers."""
+        for src, name in (("align", "aligned"), ("align*", "aligned"),
+                          ("equation", "aligned"), ("equation*", "aligned"),
+                          ("gather", "gathered"), ("multline", "gathered"),
+                          ("alignat", "alignedat")):
+            B, E = chr(92), chr(92)
+            got = rr._sanitize_tex("%sbegin{%s}a%send{%s}" % (B, src, E, src))
+            self.assertEqual(got, "%sbegin{%s}a%send{%s}" % (B, name, E, name))
+        # an already-inner environment is left exactly as it was
+        got = rr._sanitize_tex("\\begin{aligned}a\\end{aligned}")
+        self.assertEqual(got, "\\begin{aligned}a\\end{aligned}")
+
+    def test_explicit_tag_kept_as_text(self):
+        """`\\tag{3}` is the author quoting the paper's number; KaTeX refuses
+        `\\tag` outside a display equation, so it becomes plain parentheses."""
+        self.assertEqual(rr._sanitize_tex("x \\tag{3}", display=True),
+                         "x \\qquad(3)")
+        self.assertEqual(rr._sanitize_tex("\\tag*{A.1}"), "\\qquad(A.1)")
+        self.assertEqual(rr._sanitize_tex("x \\tag{} y"), "x  y")
+
+    def test_lone_eol_backslash_repaired_in_display_only(self):
+        tex = "a = 1 " + chr(92) + "\nb = 2"
+        self.assertIn(chr(92) * 2, rr._sanitize_tex(tex, display=True))
+        self.assertNotIn(chr(92) * 2, rr._sanitize_tex(tex, display=False))
+
+
+class RawHtmlBlockTest(unittest.TestCase):
+    """`<div align="center">` around a table is the shape real reports use."""
+
+    MD = """---
+title: "Raw HTML"
+read_mode: standard
+---
+
+<div align="center">
+
+| | |
+|---|---|
+| **原文** | Some Paper Title |
+| **代码** | https://github.com/aimagelab/ReT |
+
+</div>
+
+正文里的裸链接 https://example.org/a 与 `https://code.example` 保持原样。
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        md = Path(cls.tmp.name) / "raw.md"
+        md.write_text(cls.MD, encoding="utf-8")
+        cls.h = rr.render_report(md).read_text(encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_table_inside_div_becomes_a_table(self):
+        self.assertIn('<table class="kv">', self.h)
+        self.assertNotIn("|---|---|", self.h)          # no run-on pipe line
+        self.assertNotIn("| **原文** |", self.h)
+
+    def test_md_in_html_attribute_added(self):
+        # added on the way in; `md_in_html` drops it from the output, which is
+        # why the end-to-end assertion above is on the table itself
+        got = rr.enable_md_in_html('<div align="center">\n\n| | |\n')
+        self.assertIn('<div align="center" markdown="1">', got)
+        # an author who already wrote it is not given a second one
+        once = rr.enable_md_in_html('<div markdown="1">\n')
+        self.assertEqual(once.count("markdown="), 1)
+
+    def test_code_spans_keep_their_html_literal(self):
+        md = "看 `" + '<div class="x">' + "` 这个标签。\n"
+        self.assertNotIn('markdown="1"', rr.enable_md_in_html(md))
+
+    def test_bare_url_linkified_but_not_in_code(self):
+        self.assertIn('href="https://github.com/aimagelab/ReT"', self.h)
+        self.assertIn('href="https://example.org/a"', self.h)
+        self.assertNotIn('href="https://code.example"', self.h)
+
+
+class InlineChromeTest(unittest.TestCase):
+    """checklists, GitHub alerts, table pipes in code — the small blocks."""
+
+    MD = """---
+title: "Chrome"
+read_mode: quick
+---
+
+- [ ] 待办项 A
+- [x] 已完成项 B
+
+> [!WARNING]
+> 消融口径是推理期。
+
+> [!NOTE]
+> 普通提示。
+
+| 名称 | 备注 |
+|------|------|
+| `top-1|top-3` | 代码里的竖线 |
+
+| 名称 | 备注 |
+|------|------|
+| 无表头命中 | $a \\mid b$ |
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        md = Path(cls.tmp.name) / "c.md"
+        md.write_text(cls.MD, encoding="utf-8")
+        cls.h = rr.render_report(md).read_text(encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_task_list(self):
+        self.assertIn('<ul class="tasklist">', self.h)
+        self.assertIn('<li class="task done">', self.h)
+        self.assertIn('<span class="cb">✓</span>', self.h)
+
+    def test_alerts(self):
+        self.assertIn('<blockquote class="callout warn">', self.h)
+        self.assertIn('<blockquote class="callout">', self.h)
+        self.assertIn("警告", self.h)
+        self.assertNotIn("[!WARNING]", self.h)
+
+    def test_pipe_in_code_span_survives(self):
+        self.assertIn("<code>top-1|top-3</code>", self.h)
+
+    def test_pipe_inside_math_cell_survives(self):
+        self.assertIn("\\mid", self.h)
+        self.assertIn('class="math-inline"', self.h)
+
+
 class FakeCurrencyTest(unittest.TestCase):
     def test_dollar_amounts_not_greedy(self):
         # "$5 和 $100" — inline math regex requires non-space right after $
@@ -165,7 +436,19 @@ class FakeCurrencyTest(unittest.TestCase):
         self.assertEqual(len(store), 1)
         restored = rr.restore_math(guarded, store)
         self.assertIn("价格 $5 和 $100", restored)
-        self.assertIn("$x^2$", restored)
+        self.assertIn('<span class="math-inline">x^2</span>', restored)
+
+    def test_space_padded_math_needs_a_strong_signal(self):
+        # `$ x_i $` is math; `$ 100 美元 $` is prose between two prices
+        self.assertEqual(len(rr.protect_math("记 $ x_i $ 为输入")[1]), 1)
+        self.assertEqual(len(rr.protect_math("价格 $ 100 元 $ 左右")[1]), 0)
+
+    def test_escaped_dollar_is_literal(self):
+        guarded, store = rr.protect_math("价格 \\$5 不参与配对 $x$ 结束")
+        self.assertEqual(len(store), 1)
+        self.assertIn("$x$", rr.restore_math(guarded, store)
+                      .replace('<span class="math-inline">', "$")
+                      .replace("</span>", "$"))
 
 
 if __name__ == "__main__":

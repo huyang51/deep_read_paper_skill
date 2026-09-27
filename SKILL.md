@@ -453,8 +453,13 @@ python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_�
 ```
 
 - 输出与 md **同名同目录**的 `.html`：图片相对路径（`../attachments/...`）原样有效，零拷贝
-- 自带：frontmatter 元信息卡、侧边目录（h2/h3 自动生成）、KaTeX 公式渲染（CDN）、表格/引用块/代码样式、暗色模式与打印样式、`[[wikilink]]` 转样式化文本
-- 用户明确要"离线可开的版本"时加 `--offline`（公式显示为源码，其余不受影响）
+- 自带：frontmatter 元信息卡、侧边目录（h2/h3 自动生成）、KaTeX 公式渲染、表格/引用块/代码样式、暗色模式与打印样式、`[[wikilink]]` 转样式化文本
+- **公式**：`$…$` / `$$…$$` / `\[…\]` / 裸 `\begin{align}` 都识别；TeX 作为元素文本内容存放，每个公式单独 `katex.render()`（不依赖 `$` 配对启发式）。KaTeX 未加载或语法错误时**降级为可读的 LaTeX 源码**，不显示 `$` 噪声
+- **表格**：booktabs 横线风格、数值列右对齐（tabular-nums）、无表头表转键值表、窄屏（≤620px）≥3 列自动转卡片；单元格内公式与代码中的 `|` 均不受影响
+- **公式引擎三档**（默认第一档）：
+  1. CDN 多镜像（jsDelivr → npmmirror → staticfile → unpkg，逐个回退）
+  2. `--fetch-katex` 一次性下载到本地缓存后，用 `--embed-katex` 内嵌 JS/CSS/字体（单文件 ~700KB，完全离线可开）
+  3. `--offline` 完全不加载 KaTeX（公式显示为源码，其余不受影响）
 - 渲染失败（退出码 1）不阻塞完成流程：修复 md 后重试，或如实告知用户 HTML 未生成
 - quick 档速览卡默认不渲染
 
