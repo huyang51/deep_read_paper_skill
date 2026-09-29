@@ -8,19 +8,34 @@ What it does:
      to get started).
   2. Renders `templates/.mcp.json` and `templates/.claude-settings.json`
      with actual SKILL_DIR / PYTHON_CMD paths into `output/`.
-  3. If `project_dir` is set in settings.json, also copies the rendered files
-     to `<project_dir>/.mcp.json` and `<project_dir>/.claude/settings.json`.
+  3. If `project_dir` is set in settings.json, copies the hooks
+     (`output/.claude-settings.json`) to `<project_dir>/.claude/settings.json`.
+  4. Prints the `claude mcp add --scope user` command that registers the MCP
+     server, and with `--register` runs it.
+
+Why the MCP server is no longer deployed as `<project_dir>/.mcp.json`: a
+project-scoped server is gated behind a one-time approval that only the user
+can give — a repository cannot approve its own servers, so nothing this script
+writes can lift it. User scope is not gated, and it also makes the server
+available from every directory (the skill repo included), which project scope
+never did. Hooks stay project-scoped, since the SessionStart summary is only
+wanted where papers are read.
 
 Usage:
-  paper-kb-deploy          # after `pip install -e .`
-  python deploy.py         # or directly from the repo, no install needed
+  paper-kb-deploy              # after `pip install -e .`
+  python deploy.py             # or directly from the repo, no install needed
+  python deploy.py --register  # also register the MCP server at user scope
 """
+import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from mcp_server.hf_offline import prefer_cached_model
 
 SKILL_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SKILL_DIR / "output"
@@ -119,7 +134,7 @@ def render_template(template_path: Path, variables: dict) -> str:
     return content
 
 
-def generate_config():
+def generate_config(register: bool = False):
     print("=" * 55)
     print("  deep_read_paper_skill -- config generator")
     print("=" * 55)
@@ -162,6 +177,19 @@ def generate_config():
         print("         注意换 embedding 模型等于换向量空间，已有 .chromadb 需重建。")
     else:
         print(f"  [OK] python 启动自检通过（{len(report)} 个模块可导入）")
+
+    # Startup cost, not correctness: an uncached model means the first start
+    # downloads it, and a blocked huggingface.co means it waits out a timeout
+    # first. Worth saying here because the MCP client's own startup timeout
+    # (Claude Code: MCP_TIMEOUT, 30s) turns that into "the tools never appear".
+    decision = prefer_cached_model(model)
+    if not decision.cached:
+        print("  [注意] 嵌入模型尚未缓存：首次启动需联网下载，")
+        print("         若网络到不了 huggingface.co，会先卡到超时再回退。")
+    elif decision.offline:
+        print("  [OK] 嵌入模型已在本地缓存 —— 启动跳过 Hub 联网检查")
+    else:
+        print(f"  [注意] {decision.reason}")
     print()
 
     variables = {
@@ -179,6 +207,8 @@ def generate_config():
             f.write(rendered)
         print(f"  [OK] output/.mcp.json")
 
+    name = mcp_server_name()
+
     claude_template = TEMPLATES_DIR / ".claude-settings.json"
     if claude_template.exists():
         rendered = render_template(claude_template, variables)
@@ -189,24 +219,142 @@ def generate_config():
 
     print()
 
+    # Hooks stay project-scoped on purpose: SessionStart injects the knowledge
+    # base summary, which is only wanted in the project where papers are read.
+    # The MCP server is the opposite — it is a personal, machine-wide tool, so
+    # it is registered at user scope instead. See register_mcp_server().
     if project_dir:
         project_path = Path(project_dir)
         claude_dir = project_path / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
 
-        shutil.copy(OUTPUT_DIR / ".mcp.json", project_path / ".mcp.json")
         shutil.copy(OUTPUT_DIR / ".claude-settings.json", claude_dir / "settings.json")
-        print(f"  [OK] Deployed to {project_dir}")
+        print(f"  [OK] Hooks deployed to {claude_dir / 'settings.json'}")
+        warn_if_shadowed(project_path, name)
     else:
         print("  Next:")
-        print(f"  cp output/.mcp.json <project>/.mcp.json")
         print(f"  cp output/.claude-settings.json <project>/.claude/settings.json")
+
+    print()
+    register_mcp_server(name, skill_dir, python_cmd, register)
     print()
     print("=" * 55)
 
 
+def mcp_server_name() -> str:
+    """The MCP server name, read from the render so the template stays the source."""
+    try:
+        data = json.loads((OUTPUT_DIR / ".mcp.json").read_text(encoding="utf-8"))
+        return next(iter(data["mcpServers"]))
+    except (OSError, ValueError, KeyError, StopIteration):
+        return "paper_kb_mcp"
+
+
+def warn_if_shadowed(project_dir: Path, name: str):
+    """Flag a project `.mcp.json` that would outrank the user-scope registration.
+
+    Scope precedence is Local > Project > User, so a leftover `.mcp.json` from
+    an earlier version of this skill keeps winning — and it is the one that
+    sits at "Pending approval" until clicked. Left in place, it silently
+    cancels the switch to user scope, which is a confusing way to fail.
+    """
+    mcp_json = project_dir / ".mcp.json"
+    if not mcp_json.exists():
+        return
+    try:
+        data = json.loads(mcp_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    other = [k for k in (data.get("mcpServers") or {}) if k != name]
+    if name not in (data.get("mcpServers") or {}):
+        return
+
+    print()
+    print(f"  [注意] {mcp_json} 里还有一个项目级 '{name}'，它比 user 作用域优先，")
+    print("         会继续遮蔽新注册、继续要求 /mcp 批准。")
+    if other:
+        print(f"         该文件还含 {other} —— 请只删掉 '{name}' 这一项。")
+    else:
+        print(f"         删掉它：  rm \"{mcp_json}\"")
+
+
+def registration_command(name: str, skill_dir: str, python_cmd: str):
+    """The `claude mcp add` argv that registers the server at user scope.
+
+    No `cwd`: `claude mcp add` has none, and the server does not need one —
+    `config.py` resolves settings.json from `__file__`, and PYTHONPATH is what
+    makes `-m mcp_server` importable from any directory.
+    """
+    return ["claude", "mcp", "add", "--scope", "user", name,
+            "-e", f"PYTHONPATH={skill_dir}", "--", python_cmd, "-m", "mcp_server"]
+
+
+def runnable(argv):
+    """`argv` with argv[0] resolved enough for this platform to actually launch.
+
+    On Windows, npm installs Claude Code as a `claude.cmd` shim, and
+    CreateProcess cannot start a .cmd directly — it needs cmd.exe. A bare list
+    would work on a machine with claude.exe and fail on one with the shim.
+    Returns None when the command is nowhere on PATH, so the caller can fall
+    back to printing it.
+    """
+    exe = shutil.which(argv[0])
+    if exe is None:
+        return None
+    if os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
+        return ["cmd.exe", "/c", exe] + list(argv[1:])
+    return [exe] + list(argv[1:])
+
+
+def register_mcp_server(name: str, skill_dir: str, python_cmd: str, run_it: bool):
+    """Tell the user how to register at user scope — or do it, with --register.
+
+    Why user scope: a server delivered by a project `.mcp.json` is gated behind
+    a one-time approval, and that gate is not something a repository may lift
+    for itself — "A cloned repository can't approve its own servers", so
+    approval keys committed to `.claude/settings.json` are ignored until the
+    folder is trusted. User scope is not gated: `claude mcp add` is the user's
+    own action, so there is nothing left to approve.
+    """
+    argv = registration_command(name, skill_dir, python_cmd)
+    printable = " ".join(f'"{a}"' if " " in a else a for a in argv)
+
+    if not run_it:
+        print("  MCP server（user 作用域，注册一次全局可用，不需要 /mcp 批准）:")
+        print(f"    {printable}")
+        print("  或让本脚本代跑:  python deploy.py --register")
+        return
+
+    resolved = runnable(argv)
+    if resolved is None:
+        print(f"  [WARN] PATH 上找不到 claude 命令，请手动执行：")
+        print(f"    {printable}")
+        return
+
+    print(f"  $ {printable}")
+    try:
+        proc = subprocess.run(resolved, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"  [WARN] 注册失败: {type(e).__name__}: {e}")
+        print("         可手动执行上面这条命令。")
+        return
+    out = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+    if proc.returncode == 0:
+        print(f"  [OK] 已注册到 user 作用域 {out}".rstrip())
+    else:
+        print(f"  [WARN] claude mcp add 返回 {proc.returncode}: {out}")
+        print("         若提示已存在，先 claude mcp remove --scope user " + name)
+
+
 def main():
-    generate_config()
+    parser = argparse.ArgumentParser(
+        description="Generate and deploy the deep_read_paper_skill configuration.")
+    parser.add_argument(
+        "--register", action="store_true",
+        help="也执行 claude mcp add --scope user，把 MCP server 注册进你的用户级配置"
+             "（默认只打印命令，不动你的配置）")
+    args = parser.parse_args()
+    generate_config(register=args.register)
 
 
 if __name__ == "__main__":

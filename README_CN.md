@@ -136,10 +136,14 @@ cp settings.example.json settings.json
 #                在激活的环境中执行 `which python`（Linux/Mac）
 #                或 `where python`（Windows）即可获取该路径。
 
-# 5. 部署到你的项目（仍在激活的环境中）
-python deploy.py           # 或：paper-kb-deploy
-# 这一步会拿 python_cmd 做启动自检，解释器缺依赖会直接 [WARN]——别忽略它，
-# 那意味着写出去的 MCP 配置是死的。
+# 5. 部署（仍在激活的环境中）
+python deploy.py --register    # 或：paper-kb-deploy --register
+# 会拿 python_cmd 做启动自检，解释器缺依赖直接 [WARN]——别忽略它，
+# 那意味着写出去的配置是死的。
+#
+# --register 把 MCP server 注册到 **user 作用域**（一次注册，哪个目录都能用，
+# 不需要 /mcp 批准）。不加这个参数则只打印命令，你自己复制去跑。
+# hooks 仍是项目级，写进 <project_dir>/.claude/settings.json。
 
 # 6. （可选）初始化 Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
@@ -147,10 +151,14 @@ cp -r vault-template/ /your/knowledge-base/path/
 # 7. 重启 Claude Code
 ```
 
+> **为什么要 `--register`（user 作用域）而不是项目级 `.mcp.json`？**
+> 项目级的 `.mcp.json` 是仓库里的文件，Claude Code 会要求你**手动批准一次**才会启动——这是防止「clone 一个仓库就等于执行它的命令」的安全边界，官方明确写了 **"a cloned repository can't approve its own servers"**，所以任何 skill 都无法替自己批准。没批准时工具**一个都不注册**，现象就是「这些工具不存在」，没有任何报错。
+> user 作用域是你自己执行 `claude mcp add` 加的，那次操作本身就是批准，因此不再需要 `/mcp` 确认。
+
 > **🔑 运行方式：本 skill 的一切都要用这个环境的 python 跑**
 > - **会话里手动敲的工具命令**（`python tools/migrate_relations.py`、`python tools/verify_graph_arrows.py`、`python tools/index_paper.py` …）命中的是当前 PATH 上的 python —— **先 `conda activate paper-kb` 再敲**，否则会用系统 Python 跑出 `ModuleNotFoundError`。
-> - **MCP server 与两个 hook 不需要激活**：`deploy.py` 已把 `python_cmd` 的绝对路径写死进 `.mcp.json` / `.claude/settings.json`。
-> - **首次语义检索会下载嵌入模型**（约 470 MB，见上表），那一次慢是正常的，之后走本地缓存。
+> - **MCP server 与两个 hook 不需要激活**：`deploy.py` 已把 `python_cmd` 的绝对路径写死进 user 作用域的注册项里，以及 `.claude/settings.json`。
+> - **首次启动会下载嵌入模型**（约 470 MB，见上表），那一次慢是正常的；模型落盘后启动只读本地缓存（约 12 秒），不再联网。
 
 > **💡 为什么要用 Conda 环境**：
 > - 将 `chromadb` / `torch` / `sentence-transformers` / `PyMuPDF` 等依赖与系统 Python 及其他项目隔离
@@ -160,7 +168,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > **常见坑**：
 > - 忘记 `conda activate paper-kb` → `pip install` 装到了别的 Python，或跑工具时命中系统 Python，报 `ModuleNotFoundError`
 > - `settings.json` 中 `python_cmd` 指向系统 Python 而非 skill 环境 → MCP server 与 hooks 启动即崩（`deploy.py` 的自检会 [WARN]）
-> - 没设 `HF_ENDPOINT` → 模型下载卡住，MCP server 启动时像"死"了一样
+> - 没设 `HF_ENDPOINT` → 首次下载模型时卡住，MCP server 启动时像"死"了一样。模型一旦缓存到本地就不会再走这一步：server 会自己切到离线加载，跳过 HuggingFace 联网检查
 
 ### 配置 (`settings.json`)
 
@@ -387,6 +395,30 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python -m mc
 </details>
 
 <details>
+<summary><b>Q: MCP 工具在 Claude Code 里根本不出现？</b></summary>
+
+这个失败模式没有报错，现象就是"这些工具不存在"，所以先看 server 处于什么状态：
+
+```bash
+claude mcp list
+```
+
+- **`Pending approval`** —— 这个 server 是从**项目级 `.mcp.json`** 来的，还没批准。这是仓库文件的门禁，skill 无法自我批准。**推荐做法是改用 user 作用域**（`python deploy.py --register`），那样不需要批准；若你确实要用项目级，就在 Claude Code 里跑 `/mcp` 确认，并确认没有同名 `.mcp.json` 遮蔽 user 作用域的注册（`deploy.py` 会检测并提示）。
+- **`Failed to connect`** —— server 没在超时内应答。Claude Code 给每个 server 的启动预算是 `MCP_TIMEOUT`，**默认 30 秒**，覆盖的是 spawn → `initialize` 握手这一段；超时后工具一个都不会注册。真实原因在 server 的 stderr 里：
+
+```bash
+claude --debug=mcp     # 日志落在 ~/.claude/debug/<session-id>.txt
+```
+
+嵌入模型走本地缓存载入约 12 秒，通常远在预算内。若本机明显更慢，确认模型是否已缓存（`deploy.py` 会打印一行 `嵌入模型已在本地缓存`），再决定是否临时放宽预算：
+
+```bash
+MCP_TIMEOUT=60000 claude                   # Windows PowerShell:
+$env:MCP_TIMEOUT="60000"; claude
+```
+</details>
+
+<details>
 <summary><b>Q: 中文搜索结果不准确？</b></summary>
 
 默认嵌入模型 `paraphrase-multilingual-MiniLM-L12-v2` 同时支持中英文。如果你之前用的是旧版默认 `all-MiniLM-L6-v2`（仅优化英文），请在 `settings.json` 中改回 `paraphrase-multilingual-MiniLM-L12-v2`，然后重建向量索引。
@@ -403,7 +435,7 @@ PyMuPDF 无法从扫描/图片型 PDF 中提取文字。需先用 OCR 工具（�
 
 1. 将 skill 文件夹复制到每台机器
 2. 更新各机器的 `settings.json` 路径
-3. 运行 `paper-kb-deploy`
+3. 每台机器各跑一次 `python deploy.py --register` —— MCP 注册是**按机器**存在 user 作用域里的，不会跟着仓库走
 4. 用 Git 或共享盘同步 vault 目录
 </details>
 
