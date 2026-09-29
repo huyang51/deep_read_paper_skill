@@ -26,6 +26,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 🖼️ **See** the figures — the text channel (page-by-page) and a visual channel (geometry-cropped figures, vision-checked, embedded in reports) work together
 - 🖥️ **Share** every finished report as a standalone HTML reading view — KaTeX math with a three-tier delivery (CDN multi-mirror → single-file offline embed → plain LaTeX source), booktabs tables, sticky TOC with active-section highlight, click-to-zoom figures, dark/light themes, print-ready — deterministic from the Markdown, never hand-written
 - 🧠 **Analyze** across 11 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk) + 3 deep-understanding (counterfactual verification, implicit assumptions audit, **synthesis judgment**)
+- 🧭 **Route by paper type** — method / theory / survey / benchmark / system / report — before the analysis runs: theory papers get a proof-structure audit (assumption necessity, proof completeness), surveys a coverage-audit and taxonomy-axis critique, datasets an annotation-consistency and leakage audit, systems a measurement-fairness audit. Type changes what each dimension asks and what counts as evidence — never how many dimensions run, and never whether every page gets read
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
 - 🔗 **Connect** papers automatically — discovers methodological, topical, and complementary relationships
@@ -42,7 +43,7 @@ English | <a href="README_CN.md">简体中文</a>
 |---------|----------|
 | Reading papers is time-consuming; details fade | Structured dual output: detailed report + persistent memory entry |
 | Papers exist in isolation; hard to see the bigger picture | Cross-paper linking with Obsidian knowledge graph |
-| LLM summaries are shallow; miss nuance | 11-dimension analysis: 5 reader-side + 3 reviewer-side + 3 deep-understanding |
+| LLM summaries are shallow; miss nuance | 11-dimension analysis: 5 reader-side + 3 reviewer-side + 3 deep-understanding, routed by paper type (theory / survey / benchmark / system each get their own questions) |
 | Knowledge lost between projects | Portable Obsidian vault, independent of Claude Code |
 | Can't find that paper from 3 months ago | ChromaDB semantic search + MCP tools |
 
@@ -52,10 +53,10 @@ English | <a href="README_CN.md">简体中文</a>
 
 ```mermaid
 graph TD
-    A["User: Read this paper + PDF"] --> T{"Phase 0: triage (~2 min)"}
+    A["User: Read this paper + PDF"] --> T{"Phase 0: triage (tier + paper type, ~2 min)"}
     T -->|"quick"| Q["5C flash card → memory entry → done"]
     T -->|"standard / ultra"| B["Phase 1: page-by-page text + figure crops"]
-    B --> C["Phase 2: 11-dimension deep analysis"]
+    B --> C["Phase 2: 11-dimension deep analysis (type-routed)"]
     C --> D["Phase 3: report + unified QA gate"]
     C --> E["Phase 4: memory entry"]
     D --> R["Phase 3.6: HTML reading view"]
@@ -86,6 +87,8 @@ graph TD
 | 9 | Deep Understanding | **Counterfactual Verification** | Under what conditions does each core claim break? Data/scale/baseline substitution? |
 | 10 | Deep Understanding | **Implicit Assumptions Audit** | What hidden assumptions (data / evaluation / engineering) does the paper rely on? Verified or not? |
 | 11 | Deep Understanding | **Synthesis Judgment** | Synthesize all findings into an actionable "next-step map" — where to start if building on this work? |
+
+> **Type-routed**: before analysis, the paper is classified (method / theory / survey / benchmark / system / report) and each dimension's question is re-pointed accordingly — for a theory paper "experiment design" becomes a **proof-structure audit** (assumption necessity, proof completeness) and "ablation" becomes assumption-relaxation analysis; for a survey "method genealogy" becomes **lineage reconstruction** and "experiment design" becomes a **coverage audit** (search protocol, whether the taxonomy axes are MECE); dataset papers get an annotation-consistency and leakage audit, systems papers a measurement-fairness audit. Type changes *what* each dimension asks — never how many dimensions run, and never whether every page gets read (see `SKILL.md` Phase 2).
 
 ---
 
@@ -400,7 +403,7 @@ python tools/render_report.py --md "<report>.md" --embed-katex
 <details>
 <summary><b>Q: Can I customize the analysis dimensions?</b></summary>
 
-Yes — modify the workflow in `SKILL.md`. Update the report template in `references/report_template.md` accordingly (its "structures the renderer recognizes" section is what keeps the HTML reading view laying out correctly).
+Yes — modify the workflow in `SKILL.md`. Update the report template in `references/report_template.md` accordingly (its "structures the renderer recognizes" section is what keeps the HTML reading view laying out correctly), and keep the type-routing table in SKILL Phase 2 in sync (adding or removing a dimension changes the per-type "what bends" column).
 </details>
 
 ---
