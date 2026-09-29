@@ -31,6 +31,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
 - 🔗 **Connect** papers automatically — discovers methodological, topical, and complementary relationships
 - ✅ **Verify** claims about other papers against OpenAlex/Semantic Scholar (`cite_verify`), and reports posterior impact via citation data (`paper_citations`). Before the report is finalized, `tools/verify_refs.py` runs an **existence gate** over every externally named work and appends a verification ledger to §6 — with a hard honesty rule: *not indexed ≠ does not exist*, so a missing record is never rendered as "fabricated"
+- 📊 **Audit** every comparative numeric claim into a §3.7 statistical-rigor ledger — repeats/seeds, significance test and its unit, Δ vs. reported variance, selection space. Gaps are marked `[not reported]` and treated as **disclosure gaps only**: "not reported" never becomes "not done", "insignificant" or "irreproducible"
 - 💡 **Innovate** via cross-paper research directions with concrete technical feasibility analysis
 
 > **TL;DR**: Point to a PDF and say "read this paper." Everything else happens automatically.
