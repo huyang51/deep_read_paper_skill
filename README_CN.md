@@ -165,7 +165,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `vault_dir` | ✅ | 知识库路径。报告、记忆条目和向量索引存储于此。 |
 | `project_dir` | ✅ | Claude Code 项目根目录，`paper-kb-deploy` 自动将配置部署至此。 |
 | `python_cmd` | ✅ | **conda 环境中 python 的绝对路径**（如 Windows: `D:/Anaconda3/envs/paper-kb/python.exe`；Linux/Mac: `/opt/anaconda3/envs/paper-kb/bin/python`）。在激活的 conda 环境中执行 `which python` / `where python` 即可获取。 |
-| `embedding_model` | 否 | **默认: `paraphrase-multilingual-MiniLM-L12-v2`**（中英文双语）。若仅处理英文，可改用 `all-MiniLM-L6-v2`。 |
+| `embedding_model` | 否 | **默认: `paraphrase-multilingual-MiniLM-L12-v2`**（中英文双语，走 SentenceTransformer → **需要 torch**，首次使用要下载模型）。若环境里没有 torch，改用 `all-MiniLM-L6-v2`——它走 ChromaDB 自带的 ONNX 嵌入，**不需要 torch 也不用另外下载**，代价是中文语义检索变弱。**换模型等于换向量空间**：已有 `.chromadb` 里的向量与新模型不可比，需删库重建索引。`deploy.py` 会用 `python_cmd` 做一次启动自检，缺包会直接告警。 |
 | `openalex_mailto` | 否 | OpenAlex 礼貌池邮箱（提升 `cite_verify`/`paper_citations` 限流额度），可选但建议填 |
 | `trigger_keywords_cn` | 否 | 自动触发论文相关搜索提示的中文关键词（UserPromptSubmit hook）。 |
 | `trigger_keywords_en` | 否 | 自动触发论文相关搜索提示的英文关键词（UserPromptSubmit hook）。 |
@@ -424,7 +424,7 @@ python tools/render_report.py --md "<报告>.md" --embed-katex
 | `pydantic` | ≥2.0 | MCP 工具 schema 校验 |
 | `watchfiles` | ≥0.20 | 文件变化自动增量索引 |
 | `PyMuPDF` | ≥1.23 | PDF 文本提取（由 Claude Code 直接调用） |
-| `sentence-transformers` | ≥2.2 | 多语言 embedding 模型（默认）的加载后端，ChromaDB embedding function 依赖 |
+| `sentence-transformers` | ≥2.2 | 多语言 embedding 模型（默认）的加载后端，ChromaDB embedding function 依赖；用 `all-MiniLM-L6-v2` 时不需要（走 ChromaDB 自带 ONNX，仍需 `onnxruntime`，随 chromadb 安装） |
 | `markdown` | ≥3.4 | md → HTML 阅读视图渲染（`tools/render_report.py`）；KaTeX 走 CDN 或可选的本地缓存，无需 LaTeX 工具链 |
 
 全部为纯 Python，在 Linux、macOS、Windows 上均可安装。

@@ -18,6 +18,7 @@ Usage:
 import json
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +27,50 @@ OUTPUT_DIR = SKILL_DIR / "output"
 TEMPLATES_DIR = SKILL_DIR / "templates"
 SETTINGS_FILE = SKILL_DIR / "settings.json"
 SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
+
+# What the MCP server imports at startup. ChromaDB's built-in ONNX embedder
+# (all-MiniLM-L6-v2) needs none of torch, so sentence_transformers is only
+# required for other models — see probe_python().
+SERVER_IMPORTS = ("chromadb", "frontmatter", "watchfiles", "pydantic")
+ONNX_EMBEDDER = "all-MiniLM-L6-v2"
+
+
+def probe_python(python_cmd: str, embedding_model: str = "") -> dict:
+    """Return ``{module: "ok" | "<ErrorType>: <msg>"}`` for the server's imports.
+
+    A wrong interpreter is the failure that looks like nothing: the config
+    renders fine, and the MCP server plus both hooks die at startup with a
+    traceback the user never sees. Probing here turns that into a deploy-time
+    warning.
+    """
+    mods = list(SERVER_IMPORTS)
+    if embedding_model and embedding_model != ONNX_EMBEDDER:
+        mods.append("sentence_transformers")
+
+    code = (
+        "import json\n"
+        "out = {}\n"
+        f"for m in {mods!r}:\n"
+        "    try:\n"
+        "        __import__(m)\n"
+        "        out[m] = 'ok'\n"
+        "    except Exception as e:\n"
+        "        out[m] = f'{type(e).__name__}: {e}'\n"
+        "print(json.dumps(out))\n"
+    )
+    try:
+        proc = subprocess.run([python_cmd, "-c", code],
+                              capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {m: f"{type(e).__name__}: {e}" for m in mods}
+
+    for line in reversed(proc.stdout.strip().splitlines()):
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    detail = (proc.stderr or proc.stdout or "no output").strip().splitlines()
+    return {m: (detail[-1][:100] if detail else "no output") for m in mods}
 
 
 def load_settings() -> dict:
@@ -98,6 +143,20 @@ def generate_config():
     print(f"  Vault dir   : {vault_dir}")
     print(f"  Python      : {python_cmd}")
     print(f"  Project dir : {project_dir or '(not set — manual deploy)'}")
+
+    model = settings.get("embedding_model", ONNX_EMBEDDER)
+    report = probe_python(python_cmd, model)
+    broken = {m: d for m, d in report.items() if d != "ok"}
+    if broken:
+        print("  [WARN] 该 python 跑不起 MCP server —— 配置写出来也是死的：")
+        for m, d in broken.items():
+            print(f"         - {m}: {d}")
+        print("         修法：换成装齐依赖的解释器，或装上缺的包；只想跑英文库可把")
+        print(f"         embedding_model 设为 {ONNX_EMBEDDER}"
+              "（ChromaDB 自带 ONNX 嵌入，不需要 torch）。")
+        print("         注意换 embedding 模型等于换向量空间，已有 .chromadb 需重建。")
+    else:
+        print(f"  [OK] python 启动自检通过（{len(report)} 个模块可导入）")
     print()
 
     variables = {

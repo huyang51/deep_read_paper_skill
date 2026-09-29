@@ -166,7 +166,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `vault_dir` | ✅ | Where reports, memory entries, and ChromaDB index are stored |
 | `project_dir` | ✅ | Your Claude Code project root — `paper-kb-deploy` auto-deploys config here |
 | `python_cmd` | ✅ | **Absolute path to the conda env's python** (e.g. `D:/Anaconda3/envs/paper-kb/python.exe` on Windows, `/opt/anaconda3/envs/paper-kb/bin/python` on Linux/Mac). Run `which python` inside the activated env to confirm. |
-| `embedding_model` | No | **Default: `paraphrase-multilingual-MiniLM-L12-v2`** (Chinese + English). For pure English only, switch to `all-MiniLM-L6-v2` |
+| `embedding_model` | No | **Default: `paraphrase-multilingual-MiniLM-L12-v2`** (Chinese + English; goes through SentenceTransformer → **needs torch**, and the model is downloaded on first use). Without torch, use `all-MiniLM-L6-v2` — ChromaDB's built-in ONNX embedder, no torch and no download, at the cost of weaker Chinese semantic search. **Changing the model changes the vector space**: vectors already in `.chromadb` are not comparable to the new model's, so the index must be rebuilt. `deploy.py` probes `python_cmd` and warns if the interpreter cannot start the server. |
 | `openalex_mailto` | No | Email for OpenAlex's polite pool (improves `cite_verify`/`paper_citations` rate limits). Optional but recommended |
 | `trigger_keywords_cn` | No | Chinese keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
 | `trigger_keywords_en` | No | English keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
@@ -423,7 +423,7 @@ Yes — modify the workflow in `SKILL.md`. Update the report template in `refere
 | `pydantic` | ≥2.0 | MCP tool schema validation |
 | `watchfiles` | ≥0.20 | Auto-index on file changes |
 | `PyMuPDF` | ≥1.23 | PDF text extraction (used by Claude Code) |
-| `sentence-transformers` | ≥2.2 | Embedding backend for the multilingual model (the default) — required by ChromaDB's embedding function |
+| `sentence-transformers` | ≥2.2 | Embedding backend for the multilingual model (the default) — required by ChromaDB's embedding function. Not needed with `all-MiniLM-L6-v2`, which uses ChromaDB's bundled ONNX embedder (still needs `onnxruntime`, installed with chromadb) |
 | `markdown` | ≥3.4 | md → HTML reading view (`tools/render_report.py`); KaTeX comes from CDN or the optional local cache — no LaTeX toolchain needed |
 
 All pure Python — clean install on Linux, macOS, Windows.
