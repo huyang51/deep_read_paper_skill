@@ -24,7 +24,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 🎚️ **Triage** every paper in ~2 minutes (Keshav pass-1 style) into quick / standard / ultra — standard reads the whole paper in one full-context pass (1M-token windows make multi-agent fan-out unnecessary for normal papers) behind a single fresh-eyes QA gate; only 60+ page reports/surveys get the 3-agent orchestrated tier with cross-view contradiction arbitration
 - 📄 **Read** any academic paper PDF page-by-page (never skips content)
 - 🖼️ **See** the figures — the text channel (page-by-page) and a visual channel (geometry-cropped figures, vision-checked, embedded in reports) work together
-- 🖥️ **Share** every finished report as a standalone HTML reading view (KaTeX math, auto TOC sidebar, embedded figures, dark mode, print-ready) — generated from the Markdown, never hand-written
+- 🖥️ **Share** every finished report as a standalone HTML reading view — KaTeX math with a three-tier delivery (CDN multi-mirror → single-file offline embed → plain LaTeX source), booktabs tables, sticky TOC with active-section highlight, click-to-zoom figures, dark/light themes, print-ready — deterministic from the Markdown, never hand-written
 - 🧠 **Analyze** across 11 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk) + 3 deep-understanding (counterfactual verification, implicit assumptions audit, **synthesis judgment**)
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
@@ -52,10 +52,13 @@ English | <a href="README_CN.md">简体中文</a>
 
 ```mermaid
 graph TD
-    A["User: Read this paper + PDF"] --> B["Phase 1: page-by-page text + figure crops"]
-    B --> C["Phase 2: 10-Dimension Analysis"]
-    C --> D["Phase 3: Report Generation"]
-    C --> E["Phase 4: Memory Entry"]
+    A["User: Read this paper + PDF"] --> T{"Phase 0: triage (~2 min)"}
+    T -->|"quick"| Q["5C flash card → memory entry → done"]
+    T -->|"standard / ultra"| B["Phase 1: page-by-page text + figure crops"]
+    B --> C["Phase 2: 11-dimension deep analysis"]
+    C --> D["Phase 3: report + unified QA gate"]
+    C --> E["Phase 4: memory entry"]
+    D --> R["Phase 3.6: HTML reading view"]
     D --> F{"Existing papers?"}
     E --> F
     F -->|"Yes"| G["Phase 5: Cross-Paper Comparison"]
@@ -63,6 +66,7 @@ graph TD
     G --> I["Insight File + Backlinks"]
 
     style A fill:#e1f5fe
+    style Q fill:#e1f5fe
     style H fill:#c8e6c9
     style I fill:#fff9c4
 ```
@@ -185,9 +189,29 @@ The skill automatically:
 3. Crops figures to high-DPI PNGs (geometry-based) — vision-checks them and embeds the core ones in the report
 4. Performs 11-dimension deep analysis in one full-context pass (ultra tier: 3 parallel agents + contradiction arbitration)
 5. Clears one unified QA gate (fresh-eyes agent: fact sampling + readability), then generates the Chinese report → `reports/<short_name>_解读报告.md`
-6. Creates a structured memory entry → `papers/<short_name>.md` (with `read_mode` recorded)
-7. Indexes into ChromaDB for semantic search
-8. Runs cross-paper comparison and creates insight files (if related papers exist)
+6. Renders the report to a standalone HTML reading view next to it (Phase 3.6) — the `.md` stays the single source of truth, re-render after any edit
+7. Creates a structured memory entry → `papers/<short_name>.md` (with `read_mode` recorded)
+8. Indexes into ChromaDB for semantic search
+9. Runs cross-paper comparison and creates insight files (if related papers exist)
+
+### Sharing a Report as an HTML Reading View
+
+HTML rendering is automatic; to re-render after editing the Markdown:
+
+```bash
+python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"
+```
+
+| Flag | Effect |
+|------|--------|
+| *(default)* | KaTeX 0.16.11 from CDN — four mirrors tried in order (jsDelivr → npmmirror → staticfile → unpkg); a blocked mirror degrades to the next, and if all fail formulas degrade to readable LaTeX source |
+| `--fetch-katex` | One-time download of the KaTeX dist (JS/CSS/fonts) into the local cache |
+| `--embed-katex` | Inline the cached KaTeX into the HTML — one self-contained file that opens fully offline |
+| `--katex-dir DIR` | Use a local KaTeX `dist/` directory instead of the cache |
+| `--offline` | Load no KaTeX at all (formulas stay as readable LaTeX source) |
+| `--out FILE` | Write the HTML elsewhere (default: next to the `.md`) |
+
+Cache location: `%LOCALAPPDATA%\deep-read-paper` (Windows) or `~/.cache/deep-read-paper` (Linux/macOS); override with `DEEP_READ_CACHE`. Figures are relative links into `../attachments/` and all UI JavaScript is inline, so the reading view needs no network except for KaTeX in CDN mode.
 
 ### Searching Your Knowledge Base
 
@@ -206,6 +230,8 @@ Ask Claude Code directly:
 | `paper_find_related` | Find papers with methodological/topical/complementary relationships |
 | `paper_search_by_method` | Filter by method category |
 | `paper_index_stats` | Knowledge base statistics |
+| `paper_index` | Create or update a paper's structured entry (write side — used by the workflow, not usually by hand) |
+| `paper_remove` | Delete a paper from the vault and the vector index |
 | `cite_verify` | Verify claims about *other* papers against OpenAlex / Semantic Scholar (external fact-checking, anti-hallucination) |
 | `paper_citations` | Citation context of a paper: cited-by count, top citing works (posterior impact), reference list |
 
@@ -244,7 +270,7 @@ deep_read_paper_skill/
 ├── tools/
 │   ├── index_paper.py           #   CLI paper indexer
 │   ├── extract_figures.py       #   Geometry-based figure cropping (visual channel)
-│   ├── render_report.py         #   md report → standalone HTML reading view
+│   ├── render_report.py         #   md report → standalone HTML reading view (KaTeX CDN / cache / embed)
 │   └── verify_graph_arrows.py   #   Post-index graph direction check
 │
 ├── vault-template/              # Obsidian vault starter kit
@@ -252,9 +278,11 @@ deep_read_paper_skill/
 │   ├── index.md                 #   Dataview-powered dynamic index
 │   └── templates/               #   Paper memory & insight templates
 │
-├── references/                  # Report & memory entry templates
+├── references/                  # Report, memory & orchestration templates
 │   ├── report_template.md
-│   └── memory_entry_template.md
+│   ├── memory_entry_template.md
+│   ├── orchestration_prompts.md #   Phase 2 multi-agent cards (ultra tier) + unified QA card
+│   └── quickcard_template.md    #   quick-tier 5C flash card
 │
 └── output/                      # deploy.py output (auto-deployed)
 ```
@@ -290,6 +318,7 @@ This skill has produced knowledge bases covering:
 | Multimodal Retrieval | FLMR, PreFLMR, ReT, UniIR, AgentKB | Late-interaction retrieval paradigm evolution |
 
 Each paper report includes:
+- A **standalone HTML reading view** rendered alongside the Markdown
 - A **30-second flash card** at the top
 - **Method genealogy table** tracing components to prior work
 - **Claim-evidence mapping** — every claim checked against experimental support
@@ -354,9 +383,24 @@ PyMuPDF cannot extract text from image-based PDFs. Pre-process with OCR tools (e
 </details>
 
 <details>
+<summary><b>Q: The HTML report shows raw LaTeX instead of formulas?</b></summary>
+
+KaTeX is loaded from CDN by default and falls back through four mirrors; if the machine is offline or every mirror is blocked, formulas stay as readable LaTeX source (no `$` noise) and the page says so. For a fully offline single file:
+
+```bash
+# once: download the KaTeX dist into the local cache
+python tools/render_report.py --fetch-katex
+# then render with KaTeX inlined (~700 KB, works with no network)
+python tools/render_report.py --md "<report>.md" --embed-katex
+```
+
+`--offline` does the opposite on purpose: no KaTeX at all, LaTeX source only.
+</details>
+
+<details>
 <summary><b>Q: Can I customize the analysis dimensions?</b></summary>
 
-Yes — modify the workflow in `SKILL.md`. Update the report template in `references/report_template.md` accordingly.
+Yes — modify the workflow in `SKILL.md`. Update the report template in `references/report_template.md` accordingly (its "structures the renderer recognizes" section is what keeps the HTML reading view laying out correctly).
 </details>
 
 ---
@@ -371,7 +415,7 @@ Yes — modify the workflow in `SKILL.md`. Update the report template in `refere
 | `watchfiles` | ≥0.20 | Auto-index on file changes |
 | `PyMuPDF` | ≥1.23 | PDF text extraction (used by Claude Code) |
 | `sentence-transformers` | ≥2.2 | Embedding backend for the multilingual model (the default) — required by ChromaDB's embedding function |
-| `markdown` | ≥3.4 | md → HTML report rendering (`tools/render_report.py`) |
+| `markdown` | ≥3.4 | md → HTML reading view (`tools/render_report.py`); KaTeX comes from CDN or the optional local cache — no LaTeX toolchain needed |
 
 All pure Python — clean install on Linux, macOS, Windows.
 
