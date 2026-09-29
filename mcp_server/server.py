@@ -2,7 +2,7 @@ import sys
 import json
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 
 from watchfiles import awatch, Change
@@ -17,17 +17,21 @@ from mcp_server import cite_api
 from mcp_server.markdown_parser import (
     get_paper_by_id, get_all_papers, extract_wikilinks,
     create_paper_file, delete_paper_file, parse_paper,
-    invalidate_papers_cache, add_backlinks_to_referenced_papers,
+    invalidate_papers_cache, sync_paper_relations,
 )
 from mcp_server.chroma_store import ChromaStore
 from mcp_server.cross_refs import find_related
+from mcp_server.relations import describe, relation_index, validate_relations, relations_of, WARN
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("paper_kb_mcp")
 
 # Lazy-initialized on first use to avoid side effects at import time
 # (e.g., when running tests or when ChromaDB init would fail).
-_store: ChromaStore | None = None
+# Optional[X], not `X | None`: a module-level annotation is evaluated at import
+# time, so PEP 604 syntax would make this whole module unimportable on 3.9 —
+# which is the interpreter `python` resolves to on some installs.
+_store: Optional[ChromaStore] = None
 
 
 def get_store() -> ChromaStore:
@@ -114,7 +118,22 @@ TOOLS = [
                 "keywords": {"type": "array", "items": {"type": "string"}, "default": [], "description": "关键词列表"},
                 "core_contribution": {"type": "string", "default": "", "description": "一句话核心贡献"},
                 "novelty_level": {"type": "string", "default": "", "description": "新颖性定级: incremental | substantial | breakthrough"},
-                "related_papers": {"type": "array", "items": {"type": "integer"}, "default": [], "description": "关联论文ID列表"},
+                "relations": {
+                    "type": "array",
+                    "default": [],
+                    "description": "结构化关联：每条 {target: 关联论文ID, type: method_similar|problem_related|complementary|evolutionary, direction: predecessor(它是本文前作)|successor(它是本文后继)|peer(同期并列), note: 一句话说明}。写入时自动回写对方论文的互指条目与 related_papers 投影，并按 direction 维护图谱箭头（## 后续引用）",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "integer"},
+                            "type": {"type": "string", "enum": ["method_similar", "problem_related", "complementary", "evolutionary"]},
+                            "direction": {"type": "string", "enum": ["predecessor", "successor", "peer"]},
+                            "note": {"type": "string"}
+                        },
+                        "required": ["target", "type", "direction"]
+                    }
+                },
+                "related_papers": {"type": "array", "items": {"type": "integer"}, "default": [], "description": "关联论文ID列表（兼容字段：relations 的投影，工具自动维护，手填时只写 relations）"},
                 "date_read": {"type": "string", "default": "", "description": "阅读日期 YYYY-MM-DD"},
                 "read_mode": {"type": "string", "enum": ["quick", "standard", "deep"], "default": "standard", "description": "Phase 0 分诊档位：quick 速览卡 | standard 默认档（单上下文一遍通读+统一QA）| deep=超长档（>60页三组编排+矛盾检测+统一QA）"},
                 "aliases": {"type": "array", "items": {"type": "string"}, "default": [], "description": "别名列表（用于 Obsidian 图谱显示和搜索）"},
@@ -235,6 +254,14 @@ async def handle_paper_get(params: dict) -> str:
     if not paper:
         return json.dumps({"error": f"论文 ID={input_data.paper_id} 未找到"})
 
+    index = relation_index(get_all_papers())
+    relations = []
+    for e in relations_of(paper):
+        other = index.get(e["target"], {})
+        relations.append(dict(e, short_name=other.get("short_name", ""),
+                              title=other.get("title", ""),
+                              year=other.get("year", ""), describes=describe(e)))
+
     return json.dumps({
         "id": paper.get("id"),
         "title": paper.get("title"),
@@ -247,6 +274,7 @@ async def handle_paper_get(params: dict) -> str:
         "keywords": paper.get("keywords"),
         "core_contribution": paper.get("core_contribution"),
         "novelty_level": paper.get("novelty_level", ""),
+        "relations": relations,
         "related_papers": paper.get("related_papers"),
         "date_read": paper.get("date_read"),
         "aliases": paper.get("aliases", []),
@@ -307,24 +335,54 @@ async def handle_paper_index(params: dict) -> str:
         return json.dumps({"error": f"创建论文文件失败: {e}"})
 
     paper = parse_paper(filepath)
-    if paper:
+    if not paper:
+        return json.dumps({"error": "创建论文文件失败"})
+
+    # Structured relations are the source of truth: mirror them onto the papers
+    # this one points at (reciprocal entries + related_papers projection) and
+    # place the ## 后续引用 graph edges by declared direction instead of
+    # assuming "the paper just indexed is the newest".
+    #
+    # This runs BEFORE the vector index on purpose: frontmatter and graph edges
+    # are the durable part of an index and must not be lost because the store
+    # could not be built (missing embedding model, offline download).
+    sync = sync_paper_relations(paper) if relations_of(paper) else {}
+    if sync.get("mirrored") or sync.get("derived") or sync.get("edges_updated"):
+        invalidate_papers_cache()
+
+    payload = {
+        "status": "ok",
+        "paper_id": paper["id"],
+        "file": paper.get("file", str(filepath)),
+        "message": f"论文已{'更新' if is_update else '创建'}: {paper.get('title')}"
+    }
+    warnings = []
+    if relations_of(paper):
+        payload["relations_synced"] = {
+            "mirrored_to": sync.get("mirrored", []),
+            "unresolved_targets": sync.get("missing", []),
+            "legacy_migrated": sync.get("derived", []),
+            "graph_edges_updated": sync.get("edges_updated", []),
+        }
+        if sync.get("missing"):
+            warnings.append(
+                f"relations 指向的论文 {sync['missing']} 不在库中——这些关系只有单向声明，"
+                f"图谱里不会出现对应节点。先在 vault 里索引对方论文，再重跑一次同步。"
+            )
+
+    try:
         get_store().upsert_paper(str(paper["id"]), paper)
+        payload["vector_index"] = "ok"
+    except Exception as e:
+        # Degrade instead of failing the call: the paper file and its relations
+        # are already on disk; only semantic search is unavailable until the
+        # index is rebuilt.
+        payload["vector_index"] = f"failed: {type(e).__name__}: {e}"
+        warnings.append(f"向量索引失败（论文文件与关系已正常写入，语义检索暂不可用）：{e}")
 
-        # Add reverse wikilinks from old papers → new paper so Obsidian graph
-        # arrows show the direction of academic influence (old → new).
-        new_id = paper["id"]
-        short_name = paper.get("short_name", "")
-        related = paper.get("related_papers", [])
-        if not is_update and short_name and related:
-            add_backlinks_to_referenced_papers(new_id, short_name, related)
-
-        return json.dumps({
-            "status": "ok",
-            "paper_id": paper["id"],
-            "file": paper.get("file", str(filepath)),
-            "message": f"论文已{'更新' if is_update else '创建'}: {paper.get('title')}"
-        }, ensure_ascii=False, indent=2)
-    return json.dumps({"error": "创建论文文件失败"})
+    if warnings:
+        payload["warning"] = " ".join(warnings)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 async def handle_paper_remove(params: dict) -> str:

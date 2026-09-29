@@ -29,7 +29,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 🧭 **Route by paper type** — method / theory / survey / benchmark / system / report — before the analysis runs: theory papers get a proof-structure audit (assumption necessity, proof completeness), surveys a coverage-audit and taxonomy-axis critique, datasets an annotation-consistency and leakage audit, systems a measurement-fairness audit. Type changes what each dimension asks and what counts as evidence — never how many dimensions run, and never whether every page gets read
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
-- 🔗 **Connect** papers automatically — discovers methodological, topical, and complementary relationships
+- 🔗 **Connect** papers with declared semantics — every relation carries a type (method-similar / problem-related / complementary / evolutionary) and a direction (predecessor / successor / peer) in frontmatter. The reciprocal entry, the `related_papers` projection and the Obsidian graph edge are all derived from that declaration, so arrow direction follows the data instead of the order you happened to read the papers in
 - ✅ **Verify** claims about other papers against OpenAlex/Semantic Scholar (`cite_verify`), and reports posterior impact via citation data (`paper_citations`). Before the report is finalized, `tools/verify_refs.py` runs an **existence gate** over every externally named work and appends a verification ledger to §6 — with a hard honesty rule: *not indexed ≠ does not exist*, so a missing record is never rendered as "fabricated"
 - 📊 **Audit** every comparative numeric claim into a §3.7 statistical-rigor ledger — repeats/seeds, significance test and its unit, Δ vs. reported variance, selection space. Gaps are marked `[not reported]` and treated as **disclosure gaps only**: "not reported" never becomes "not done", "insignificant" or "irreproducible"
 - 💡 **Innovate** via cross-paper research directions with concrete technical feasibility analysis
@@ -231,10 +231,10 @@ Ask Claude Code directly:
 |------|-------------|
 | `paper_search` | Semantic search via ChromaDB (supports Chinese & English) |
 | `paper_get` | Retrieve full paper details by ID |
-| `paper_find_related` | Find papers with methodological/topical/complementary relationships |
+| `paper_find_related` | Find related papers — declared relations first, then legacy `related_papers`, then keyword-inferred candidates (each result carries `source`, `relation_type`, `direction`) |
 | `paper_search_by_method` | Filter by method category |
 | `paper_index_stats` | Knowledge base statistics |
-| `paper_index` | Create or update a paper's structured entry (write side — used by the workflow, not usually by hand) |
+| `paper_index` | Create or update a paper's structured entry, `relations` included (write side — used by the workflow, not usually by hand); syncs reciprocal entries and graph edges |
 | `paper_remove` | Delete a paper from the vault and the vector index |
 | `cite_verify` | Verify claims about *other* papers against OpenAlex / Semantic Scholar (external fact-checking, anti-hallucination) |
 | `paper_citations` | Citation context of a paper: cited-by count, top citing works (posterior impact), reference list |
@@ -261,7 +261,8 @@ deep_read_paper_skill/
 ├── mcp_server/                  # MCP Server (ChromaDB + 9 tools)
 │   ├── server.py                #   JSON-RPC main loop + tool dispatch
 │   ├── chroma_store.py          #   Vector index (create, search, update, delete)
-│   ├── markdown_parser.py       #   YAML frontmatter parser + auto backlinks
+│   ├── markdown_parser.py       #   YAML frontmatter + relation sync (reciprocals, projection, graph edges)
+│   ├── relations.py             #   Relation rules: types, directions, reciprocity, validation
 │   ├── cross_refs.py            #   Cross-paper relationship discovery
 │   ├── config.py                #   Reads settings.json
 │   ├── models.py                #   Pydantic I/O models
@@ -276,7 +277,8 @@ deep_read_paper_skill/
 │   ├── extract_figures.py       #   Geometry-based figure cropping (visual channel)
 │   ├── render_report.py         #   md report → standalone HTML reading view (KaTeX CDN / cache / embed)
 │   ├── verify_refs.py           #   Batch existence gate for externally named works (§6 ledger)
-│   └── verify_graph_arrows.py   #   Post-index graph direction check
+│   ├── verify_graph_arrows.py   #   Graph health: relation integrity + arrow direction + justification
+│   └── migrate_relations.py     #   Legacy vault → structured relations (dry-run by default)
 │
 ├── vault-template/              # Obsidian vault starter kit
 │   ├── .obsidian/               #   Graph + properties + Dataview config
@@ -306,10 +308,12 @@ deep_read_paper_skill/
 
 ### Knowledge Graph Conventions
 
-- **Arrows**: Old paper → New paper (academic influence flow)
-- **Forward references** (new paper body): **Bold text** (`**SayPlan**`), NOT wikilinks — prevents reverse edges
-- **Backlinks** (old paper body): System auto-creates `## 后续引用` section with `[[wikilink]]`
+- **`relations` is the source of truth** — each entry declares `target` / `type` / `direction` / `note`, with `direction` relative to the owning paper (`predecessor` = the other paper came first, `successor` = it came later, `peer` = parallel work)
+- **Everything else is derived**: the reciprocal entry on the other paper, the `related_papers` projection on both sides, and the `## 后续引用` graph edge are written at index time — declaring the relation is the whole job
+- **Arrows**: Old paper → New paper (academic influence flow). The sync places the edge according to the declared direction, so a non-chronological read needs no manual repair; `peer` relations produce no edge at all
+- **Prose references**: **Bold text** (`**SayPlan**`), NOT wikilinks — a hand-written wikilink creates a duplicate or wrong-way edge
 - **Unindexed papers**: Also use bold text — prevents ghost nodes
+- **Legacy vaults**: `python tools/migrate_relations.py` prints a plan (no writes), `--apply` commits it; `python tools/verify_graph_arrows.py` checks relation integrity, arrow direction and body justification
 
 ---
 

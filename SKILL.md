@@ -533,7 +533,7 @@ python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_�
 
 ### 4.2 创建 Vault Paper 文件
 
-> 🚨 **本节会触发自动 backlink，可能导致图谱方向错误**——索引完成后**必须**运行 `python tools/verify_graph_arrows.py` 验证方向。详见 §4.5。
+> 🚨 **本节会写入跨论文关系与图谱边**——`relations` 声明什么方向，图谱边就落在哪篇论文里（非时间顺序阅读不再需要手动修正）。索引完成后**必须**运行 `python tools/verify_graph_arrows.py` 复核。详见 §4.5。
 
 **仅使用以下两种方式之一，严禁同时使用两种方式（会导致同一 ID 生成两个文件）**。
 
@@ -552,7 +552,7 @@ python "<skill_dir>/tools/index_paper.py" \
   --problem_domain "问题领域" \
   --keywords "kw1,kw2,kw3" \
   --core_contribution "一句话核心贡献" \
-  --related_papers "1,3" \
+  --relations '[{"target":1,"type":"evolutionary","direction":"predecessor","note":"本文沿用它的双塔结构"},{"target":3,"type":"method_similar","direction":"peer","note":"同期并行工作"}]' \
   --date_read "2026-05-15" \
   --read_mode "deep" \
   --aliases "别名1,别名2" \
@@ -560,7 +560,11 @@ python "<skill_dir>/tools/index_paper.py" \
   --body_file "<tmp_body_file>.md"
 ```
 
-脚本自动完成 ID 分配、文件创建、ChromaDB 索引、自动 backlink 到 related_papers（**带时间线校验**：如果新论文比 vault 中已有论文更老，会跳过并警告）。输出 JSON 格式结果到 stdout。
+脚本自动完成 ID 分配、文件创建、ChromaDB 索引，并把 `--relations` 声明的关系落地成三件事：**对方论文里的互指条目**（`direction` 自动取反）、**双方 `related_papers` 投影**、**按声明方向放置的 `## 后续引用` 图谱边**（写在被声明为 `successor` 的一方）。输出 JSON 格式结果到 stdout；`relations_synced.unresolved_targets` 非空表示指向的论文尚未入库——索引对方论文后重跑一次即可补齐。
+
+> `--related_papers "1,3"` 是迁移前的旧字段，仅为兼容保留：它没有方向语义，方向只能按发表年份推断。**新关联一律用 `--relations`**；关系较多时 `--relations` 也接受一个 JSON 文件路径（避免命令行转义地狱）。
+>
+> 返回里 `vector_index: "failed: …"` 表示向量索引没建起来（常见原因：嵌入模型未安装/未下载），**论文文件与关系已经正常落盘**——按 warning 里的提示修好环境后重跑一次索引即可，不要因为这一项重写论文文件。
 
 **方式 B（备选）：手动创建 Markdown 文件**
 
@@ -583,7 +587,12 @@ method_category: "方法类别"
 problem_domain: "问题领域"
 keywords: ["关键词1", "关键词2"]
 core_contribution: "一句话核心贡献"
-related_papers: [<关联论文ID列表>]
+relations:
+  - target: <对方论文ID>
+    type: method_similar | problem_related | complementary | evolutionary
+    direction: predecessor | successor | peer   # 相对本文：对方是本文的前身 / 后续 / 同期
+    note: "一句话关联依据（可留空，但正文 ## 与前人工作的关系 里必须有依据）"
+related_papers: [<关联论文ID列表——有 relations 时由脚本自动投影，请勿手写>]
 date_read: <YYYY-MM-DD>
 read_mode: quick | standard | deep
 aliases: ["别名1", "别名2"]
@@ -593,9 +602,8 @@ tags: [tag1, tag2]
 
 **Body 内容**：与原有结构化摘要相同，但需注意：
 
-- **图谱箭头约定**：箭头方向为 旧论文 → 新论文（学术影响流向）。为实现此效果：
-  - **新论文 body 中引用旧论文**：使用**加粗文本**（如 `**FLMR**`），不要用 wikilink。这避免了新→旧的反向图谱边
-  - **旧论文 body 中的回链**：系统自动在旧论文中创建 `## 后续引用` 小节，包含指向新论文的 `[[wikilink]]`，形成旧→新的图谱箭头
+- **正文里引用 vault 中已有的论文**：统一用**加粗文本**（如 `**FLMR**`）——wikilink 边由 `relations` 驱动、由脚本写入 `## 后续引用` 小节，正文再手写一个只会造成重复边或反向边
+- **`## 后续引用` 小节由脚本维护**：哪篇论文带这段、里面有哪些 `[[wikilink]]`，全部由双方 `relations` 的 `direction` 推导（旧论文 → 新论文）。**不要手写或手工搬移这个段落**
 - **对尚未阅读、vault 中不存在的论文或方法**，同样使用加粗文本（如 `**CLIP**`），避免在图谱中产生幽灵节点
 - body 内容保持轻量，只存核心理解和关系信息，不存公式细节和实验数据（详见报告）
 
@@ -611,83 +619,84 @@ tags: [tag1, tag2]
 
 > 🚨 **必读 — 三大硬性规则**（按重要性排序，违反任一 = 知识库污染）
 >
-> 1. **相关性优先**：填 `related_papers` 前**必须**调用 MCP 工具 `paper_find_related` 找候选
-> 2. **时间线方向**：图谱箭头方向 = 旧论文 → 新论文（学术影响流向）
-> 3. **非时间顺序警告**：脚本会自动检测方向错误并停止添加 backlink
+> 1. **相关性优先**：声明 `relations` 前**必须**调用 MCP 工具 `paper_find_related` 找候选，人工核验后才写
+> 2. **`relations` 是唯一事实源**：`related_papers` 与 `## 后续引用` 图谱边都是它的投影，**禁止手改**（手改会在下次同步被覆盖）
+> 3. **方向是数据，不是阅读顺序**：`direction` 由你按两篇论文的实际关系声明，脚本据此把图谱边放到正确的一侧
 
 #### 4.5.1 规则 1：相关性优先（最重要的规则）
 
-**填 `related_papers` 之前必须先用 `paper_find_related` 工具找候选**。该工具会从三方面判断相关性：
-- **frontmatter 引用**：`related_papers` 字段
-- **wikilinks**：body 中的 `[[...]]` 链接
-- **共享关键词**：method_category / problem_domain / keywords 的重叠数（需 ≥ 2 个才视为相关）
+**声明 `relations` 之前必须先用 `paper_find_related` 工具找候选**。该工具按可信度分三档返回，每个候选带 `source` 字段：
+- `declared` — 已有 `relations` 声明（最高）
+- `legacy` — 旧 `related_papers` 字段
+- `inferred` — 共享关键词推断：method_category / problem_domain / keywords 的重叠数（需 ≥ 2 个才视为相关）
 
 工具返回的每个候选都包含：
 - `relation_type`：`method_similar` / `problem_related` / `complementary` / `evolutionary`
+- `direction`：`predecessor` / `successor` / `peer`（相对被查询的论文）
+- `note`：声明里写的关联依据（若有）
 - `shared_keywords`：具体共享了哪些关键词
 
-**禁止** 仅凭 Agent 直觉填 `related_papers`——必须以工具返回的候选为基础。
+**禁止** 仅凭 Agent 直觉声明关系——必须以工具返回的候选为基础。
 
 **完整工作流**：
-1. 写完论文 body，**先不填** `related_papers` 字段
-2. **临时索引**论文（拿到 ID），使用占位符 `related_papers: []`
+1. 写完论文 body，**先不填** `relations`
+2. **临时索引**论文（拿到 ID）
 3. 调用 `paper_find_related(new_paper_id)` 找出所有候选
 4. **人工核验**每个候选：
    - `relation_type` 是否合理（method_similar / problem_related / complementary / evolutionary）
    - `shared_keywords` 是否真的重叠（不只是字符串匹配）
    - 是否真的有学术联系（不是同名巧合）
-5. 核验通过的候选才填入 `related_papers` 字段
-6. 重新索引（或直接更新 frontmatter）
+5. 核验通过的候选写成 `relations` 条目（`target` / `type` / `direction` / `note`）——**`direction` 是相对本文的**：对方是本文的前身写 `predecessor`，对方是本文的后续工作写 `successor`，同期并行写 `peer`
+6. 重新索引（`index_paper.py --relations` 或 MCP 工具 `paper_index`）——互指条目、`related_papers` 投影与图谱边自动同步
 
 > ⚠️ **不能直接照搬工具结果**——工具是基于字符串匹配启发式，可能误判。人工核验是最后一道防线。
 
-#### 4.5.2 规则 2：图谱箭头方向 = 旧论文 → 新论文
+#### 4.5.2 规则 2：方向与图谱边（由声明驱动）
 
-**图谱箭头方向：旧论文 → 新论文**（学术影响流向）。**不是双向！**
+**图谱箭头方向：旧论文 → 新论文**（学术影响流向）。这条约定没变，变的是**谁来保证它**：
 
-当**非按时间顺序**阅读时（例如先读了 2024 的 ReT，现在索引 2023 的 UniIR），脚本 `index_paper.py` 会**自动**给 vault 中已存在的论文（ReT）添加 `## 后续引用 [[UniIR]]` 段落——但这是**完全反向的**！必须按下面规则手动修正。
+| 事项 | 旧流程（迁移前） | 现在 |
+| --- | --- | --- |
+| 方向判定 | 比较年份，人工判断谁旧谁新 | 你声明 `direction`，脚本按声明落边 |
+| 图谱边 | 脚本假定"被索引的论文是最新的"，非时间顺序阅读时**手工搬移** `## 后续引用` | 边写在**被声明为 `successor` 的一方**（即更早那篇）的 body 里，与阅读顺序无关 |
+| 互指条目 | 手工在双方 `related_papers` 互加 ID | 声明一侧即自动写入对方（`direction` 自动取反） |
+| `peer` 关系 | 无对应概念，只能当"无关联" | 明确声明 `peer`：双向互指、**不产生图谱边**（并行工作没有影响方向） |
 
-**4.1 关联前必做：时间线校验**
+四类关系的判定口径（写 `type` 时对照）：
+- **方法相似** `method_similar`：两篇论文使用或改进相似的方法
+- **问题相通** `problem_related`：两篇论文解决的是同一类问题
+- **互补关系** `complementary`：论文A的方法可用于改进论文B的某个模块
+- **发展关系** `evolutionary`：论文A是论文B的基座/前身，或反过来
 
-每当读完一篇新论文，检查是否可以与知识库中已有的论文建立关联：
+例：先读 2024 的 ReT，再读 2023 的 UniIR。索引 UniIR 时声明 `{"target": <ReT 的 id>, "type": "evolutionary", "direction": "successor"}`——脚本把 `[[ReT]]` 写进 **UniIR** 的 `## 后续引用`（而不是像旧脚本那样误写进 ReT），并在 ReT 里写入 `direction: predecessor` 的互指条目。
 
-- **方法相似**：两篇论文使用或改进相似的方法
-- **问题相通**：两篇论文解决的是同一类问题
-- **互补关系**：论文A的方法可用于改进论文B的某个模块
-- **发展关系**：论文A是论文B的基座/前身，或反过来
+> ⚠️ **声明与年份冲突**（preprint、v1/v2、合并记录等）：报 `year_conflict` **提示**，不阻断。以声明为准，必要时在 `note` 里写明原因。
+>
+> ⚠️ **正文里手写的 wikilink 仍是错误来源**：脚本写入的边不会出错，但你在正文随手写一个 `[[ReT]]` 就会造出重复边或方向错误的边。引用 vault 内论文一律用**加粗文本**。
 
-> ⚠️ **硬性约束——时间线校验（在建立任何关联前必须执行）**：
->
-> **CLI 脚本 `--related_papers` 默认假定"被索引的论文引用更早的论文"，不验证实际发表年份。如果在非时间顺序阅读时盲目使用，会导致图谱箭头方向错误（新论文指向旧论文）。**
->
-> **⚠️ `index_paper.py` 现在的行为**：如果检测到 vault 中已存在的论文**比新索引的论文更新**（即非时间顺序阅读），脚本会**跳过自动 backlink 并打印警告**，提示你需要手动修正。
->
-> 在建立关联前，必须执行以下步骤：
->
-> 1. **提取年份**：获取当前论文的 `year`，以及每个关联候选论文的 `year`（从 vault 对应 `.md` 文件的 YAML frontmatter 读取）
-> 2. **确定先后**：比较年份，明确区分「旧论文」和「新论文」
-> 3. **正确建立链接**：
->    - **旧论文** (年份更早) 的 body：**必须添加** `## 后续引用` 小节，包含指向新论文的 `[[wikilink]]`（形成 旧→新 的图谱箭头）
->    - **新论文** (年份更晚) 的 body：引用旧论文时使用**加粗文本**（如 `**UniIR**`），**禁止**使用 wikilink（避免新→旧的反向边）
->    - `related_papers` frontmatter 字段双向添加（无论是旧论文还是新论文，互加 ID）
-> 4. **核查**：完成关联后，运行 `python tools/verify_graph_arrows.py` 验证
-> 5. **如有违规**，手动修正：
->    - 把误加的 `## 后续引用` 段落从新论文移到旧论文
->    - 把新论文 body 中的 `[[OldPaper]]` wikilink 替换为 `**OldPaper**` bold
->
-> **常见错误场景**：先读了一篇 2024 年的论文 (ReT)，后读了一篇 2023 年的论文 (UniIR)。在索引 UniIR 时，UniIR 年份更早，因此 UniIR 是旧论文——应在 UniIR.md 中添加 `## 后续引用 [[ReT]]`，而非在 ReT.md 中添加 `## 后续引用 [[UniIR]]`。
->
-> **自动化验证**（强烈推荐）：索引完成后运行
-> ```bash
-> python tools/verify_graph_arrows.py
-> ```
-> 该脚本会自动检查所有相关论文的图谱箭头方向，违反规则时返回 exit code 1 并列出所有问题。
+**核查**：关联完成后运行
+```bash
+python tools/verify_graph_arrows.py
+```
+脚本按可信度递减做三层检查：① `relations` 完整性（互指对称、类型一致、目标存在、方向与年份、依据是否齐备）② 箭头方向（此时报错基本意味着**手写链接**，不是同步失败）③ 每条 `related_papers` 是否有正文依据。有问题时 exit code 1。
 
 **关联方式**：
-1. 在**双方** paper 的 YAML frontmatter `related_papers` 字段中互加对方 ID
-2. **新论文** body 中引用旧论文时使用**加粗文本**（如 `**PreFLMR**`），不使用 wikilink——避免新→旧的反向图谱边
-3. **旧论文** body 中手动添加 `## 后续引用` 小节，包含指向新论文的 `[[wikilink]]`，使图谱箭头从旧论文指向新论文（学术影响流向：早期工作 → 后续工作）
+1. 通过 `index_paper.py --relations` / MCP 工具 `paper_index` 的 `relations` 参数声明；脚本同步互指条目与图谱边
+2. **新论文** body 中引用旧论文用**加粗文本**（如 `**PreFLMR**`），**不要**用 wikilink
+3. 依据仍然写在正文 `## 与前人工作的关系` / 方法概述里（`verify_graph_arrows.py` 第 ③ 层检查它）；`note` 只是索引卡上的一句话
 4. 如有有价值的跨论文创新见解，在 vault 的 `insights/` 下创建 insight 文件，frontmatter 中 `papers` 列表按年份从早到晚排列
+
+#### 4.5.3 旧 vault 迁移
+
+已有 vault 若只有 `related_papers` 和手写 `## 后续引用`（没有 `relations`），用迁移工具一次性结构化——**默认只出计划，不写盘**：
+
+```bash
+python tools/migrate_relations.py            # 扫描并打印迁移计划（安全，不写盘）
+python tools/migrate_relations.py --apply    # 写入 relations + 互指条目 + 图谱边
+python tools/migrate_relations.py --check    # 只做关系完整性校验
+```
+
+迁移口径：`related_papers` 行按年份推断方向，计划里标注"（按年份推断）"；`## 后续引用` 里的链接方向**本来就已被约定写明**（链接意味着"对方在我之后"），因此恢复为 `direction: successor` 而不猜；`related_papers` 里指向未入库论文的 ID 报为幽灵节点，**不静默丢弃**。exit code：0 干净 / 2 有待迁移项或提示 / 1 有错误。
 
 ### 4.6 Obsidian 图谱视图
 
@@ -704,6 +713,8 @@ tags: [tag1, tag2]
 ```
 
 papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱中显示为干净的模型名节点。各论文的裁图存于 vault 的 `attachments/<short_name>/`（PNG + manifest.json，见 1.3），`graph.json` 的 `showAttachments: false` 使其不进入图谱视图，仅供报告相对路径引用。
+
+图谱中论文节点之间的**边只来自 `## 后续引用` 小节**（由 `relations` 驱动、脚本维护，见 4.5.2）——正文里的加粗文本不产生边，手写的 wikilink 会产生不受控的边。
 
 ---
 
@@ -736,11 +747,9 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 
 ### 5.4 关联更新
 
-- **必须**在**双方**论文的 `related_papers` frontmatter 中互加对方 ID
-- **必须先执行 4.5 节的时间线校验**：确定哪篇是旧论文、哪篇是新论文
-- **旧论文** (年份更早)：手动在其 body 末尾添加 `## 后续引用` 小节，包含指向新论文的 `[[wikilink]]`（如果系统未自动创建）
-- **新论文** (年份更晚)：其 body 中引用旧论文必须用加粗文本，**禁止** wikilink
-- 如果 `index_paper.py` 自动创建了方向错误的 `## 后续引用`（因为脚本假定被索引论文是"新论文"），必须手动修正
+- 把 5.1-5.3 识别出的关联写成 `relations` 条目（**必须先执行 4.5.1 的候选核验**），再重新索引该论文：互指条目、`related_papers` 投影与 `## 后续引用` 图谱边由脚本按 `direction` 放置
+- **禁止**手改 `related_papers` 或 `## 后续引用`：它们是 `relations` 的投影，手改会在下次同步时被覆盖，且 `verify_graph_arrows.py` 会报 `legacy_drift`
+- 方向由声明决定，与阅读顺序无关；`peer` 关系双向互指但不产生图谱边
 
 ---
 
@@ -749,7 +758,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 1. **PDF 质量**：如果 PDF 是扫描版（PyMuPDF 无法提取文字），告知用户需要使用 OCR 工具；此时视觉通道按 1.3 规则 5 降级处理（整页读图/手动裁剪），图仍要嵌入报告
 2. **非常规论文**：Phase 0 判型（方法/理论/综述/基准/系统/报告）后按 Phase 2『类型路由』表调整各维度问法与报告节名——类型**不减少维度数**、不放松逐页全读；表中未列的类型（position paper / tutorial / 元分析等）按"方法"骨架跑全 11 维，并在报告元信息类型行标注"（存疑）"
 3. **数学密集型论文**：如果论文极度数学化（如纯理论 ML 论文），方法解读部分侧重数学直觉而非逐公式推导
-4. **记忆维护**：阅读 5 篇以上论文后，回顾更新早期论文的 `related_papers` frontmatter，并确认系统自动添加的 `## 后续引用` wikilinks 正确
+4. **记忆维护**：阅读 5 篇以上论文后，回顾早期论文的 `relations` 是否仍然准确（新论文可能改变"发展关系"的判定），改完用 `python tools/migrate_relations.py --check` 或 `tools/verify_graph_arrows.py` 复核；**不要**手工编辑 `related_papers` / `## 后续引用`（它们是投影，会被同步覆盖）
 5. **完成报告**：全部阶段完成后，仅回复"完成"，不附加任何过程检查项（如"无 Read 调用、无编码错误、无重复文件"等）。**standard/超长档的"完成"以统一 QA 通过为前提**；若有未决项，回复"完成（有未决项，见验收记录）"并给一行摘要
 6. **档位纪律**：分诊结论告知后直接执行不等待确认；**默认走 standard 单上下文通读，不要主动升超长档**；超长档三组任务卡必须同一条消息内并行派发（勿串行），派发前完成 `orchestration_prompts.md`"派发前必做"六条（绝对路径 / 视觉分工 / 台账补验 / 页码契约 / **分页硬契约**——分组读页清单列死、并集覆盖全页、清单外禁读 / **类型透传**——论文类型与该类型的维度调整行注入每张卡）；`.dimcards/` 保留不删
 7. **HTML 是构建产物**：`reports/*.html` 由 `render_report.py` 生成，**禁止手工编辑**；md 报告任何修改后必须重跑渲染同步
@@ -761,5 +770,6 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3；单元测试：`tests/test_extract_figures.py`）
 - 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`，离线测试 `tests/test_cite_api.py`；使用规则见 Phase 2"外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见 Phase 2"外部断言核验"第 4 条；测试 `tests/test_verify_refs.py`）
 - HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → 同名 .html，KaTeX/目录/嵌图；测试 `tests/test_render_report.py`；用法见 Phase 3.6）
+- 跨论文关系：结构化 `relations` frontmatter（唯一事实源，规则见 4.5；实现 `mcp_server/relations.py`）；体检 `tools/verify_graph_arrows.py`、旧 vault 迁移 `tools/migrate_relations.py`（离线测试 `tests/test_relations.py`）
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）
 - 超长档编排任务卡：`references/orchestration_prompts.md`（三组维度卡 + 分页硬契约 + 装配矛盾检测 + 统一 QA 卡 + 仲裁卡；仅 >60 页或点名编排时加载，普通论文用 standard 档不需本文件）

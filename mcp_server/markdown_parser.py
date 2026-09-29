@@ -4,6 +4,14 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 from mcp_server.config import PAPERS_DIR
+from mcp_server.relations import (
+    derive_relations, inverse_direction, merge_relation, normalize_relations,
+    project_related_papers, relation_index, relations_of,
+)
+
+# The machine-managed section that carries Obsidian graph edges. Everything
+# under it is written by sync_graph_edges() — never by prose.
+FOLLOWUP_HEADER = "## 后续引用"
 
 
 def parse_paper(path: Path) -> dict:
@@ -138,14 +146,17 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     papers_dir.mkdir(parents=True, exist_ok=True)
 
     paper_id = paper_data.get("id")
+    # The previous version of this file: read it BEFORE the idempotency delete
+    # below, because this whitelist is a full rewrite and anything the caller
+    # omits (relations, read_mode) must be carried over deliberately.
+    prev = get_paper_by_id(paper_id, papers_dir) if paper_id is not None else None
     if paper_id is None:
         paper_id = get_next_id(papers_dir)
         paper_data["id"] = paper_id
     else:
         # Idempotency check: if a file with this ID already exists, overwrite it
-        existing = get_paper_by_id(paper_id, papers_dir)
-        if existing and existing.get("file"):
-            existing_path = papers_dir.parent / existing["file"]
+        if prev and prev.get("file"):
+            existing_path = papers_dir.parent / prev["file"]
             if existing_path.exists():
                 # Delete old file first to avoid duplicate ID files
                 existing_path.unlink()
@@ -172,6 +183,19 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
         except Exception:
             pass
 
+    # Structured relations carry the semantics; related_papers is the legacy
+    # projection other queries still read. Declared relations win and the
+    # projection is regenerated, so the two can never disagree in a fresh write.
+    relations, _ = normalize_relations(paper_data.get("relations"))
+    related_papers = paper_data.get("related_papers", [])
+    if not relations and prev:
+        # Legacy path: an update that does not mention relations must not erase
+        # the ones already recorded (that would silently drop graph edges).
+        relations = relations_of(prev)
+        related_papers = related_papers or prev.get("related_papers", [])
+    if relations:
+        related_papers = project_related_papers(relations)
+
     # Build frontmatter metadata
     metadata = {
         "id": paper_id,
@@ -185,8 +209,14 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
         "keywords": paper_data.get("keywords", []),
         "core_contribution": paper_data.get("core_contribution", ""),
         "novelty_level": paper_data.get("novelty_level", ""),
-        "related_papers": paper_data.get("related_papers", []),
+        "relations": relations,
+        "related_papers": related_papers,
         "date_read": paper_data.get("date_read", date.today().isoformat()),
+        # read_mode was accepted by the MCP tool / CLI and rendered in reports,
+        # but this whitelist never carried it — so it was silently dropped on
+        # write and *erased* on an idempotent re-index. Fixed here.
+        "read_mode": (paper_data.get("read_mode")
+                      or (prev or {}).get("read_mode") or "standard"),
         "aliases": paper_data.get("aliases", []),
         "tags": paper_data.get("tags", []),
     }
@@ -204,97 +234,242 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     return filepath
 
 
-def add_backlinks_to_referenced_papers(new_paper_id: int, new_short_name: str,
-                                         related_paper_ids: list[int],
-                                         papers_dir: Path = None,
-                                         new_paper_year: int = None) -> list[int]:
-    """Add reverse wikilinks from old referenced papers back to the new paper.
+def _paper_path(paper: dict, papers_dir: Path) -> Optional[Path]:
+    file_rel = paper.get("file", "")
+    if not file_rel:
+        return None
+    filepath = papers_dir.parent / file_rel
+    return filepath if filepath.exists() else None
 
-    Obsidian graph arrows point FROM the file containing a [[wikilink]] TO the
-    target.  To achieve "old paper → new paper" direction (academic influence
-    flow), we add [[new_short_name]] wikilinks inside each old paper's body.
 
-    **Important**: Graph arrows must be OLD → NEW. If the new paper is actually
-    OLDER than the existing paper (non-chronological reading), this function
-    will skip the backlink and emit a WARNING. The caller is responsible for
-    fixing the direction manually.
+def _write_paper(path: Path, metadata: dict, body: str) -> None:
+    post = frontmatter.Post(body, **metadata)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(frontmatter.dumps(post).rstrip() + "\n")
 
-    Returns the list of paper IDs that were successfully updated.
+
+def _split_followup(body: str) -> tuple[str, list[str], str]:
+    """Split a body into (before, followup_links, after) around FOLLOWUP_HEADER."""
+    if FOLLOWUP_HEADER not in body:
+        return body, [], ""
+    before, rest = body.split(FOLLOWUP_HEADER, 1)
+    m = re.search(r"\n## ", rest)
+    section, after = (rest[:m.start()], rest[m.start():]) if m else (rest, "")
+    return before, re.findall(r"\[\[([^\]]+)\]\]", section), after
+
+
+def _rebuild_followup(before: str, links: list[str], after: str) -> str:
+    before, after = before.rstrip(), after.rstrip()
+    if not links:
+        joined = "\n\n".join(x for x in (before, after) if x)
+        return (joined + "\n") if joined else ""
+    block = FOLLOWUP_HEADER + "\n\n" + "\n".join(f"- [[{s}]]" for s in sorted(links))
+    parts = [p for p in (before, block, after) if p]
+    return "\n\n".join(parts) + "\n"
+
+
+def update_paper_relations(paper_id: int, entries: list[dict],
+                           papers_dir: Path = None) -> bool:
+    """Write ``relations`` (+ the ``related_papers`` projection) into an existing
+    paper, leaving body and every other frontmatter key untouched.
+
+    Surgically updating matters for migration: a full rewrite through
+    create_paper_file would re-derive the filename and drop any field the
+    whitelist does not know about.
     """
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
-    if not related_paper_ids or not new_short_name:
-        return []
+    paper = get_paper_by_id(paper_id, papers_dir)
+    if not paper:
+        return False
+    path = _paper_path(paper, papers_dir)
+    if path is None:
+        return False
 
-    backlink = f"[[{new_short_name}]]"
-    updated = []
+    metadata = {k: v for k, v in paper.items() if k not in ("body", "file")}
+    metadata["relations"] = entries
+    metadata["related_papers"] = project_related_papers(entries)
+    _write_paper(path, metadata, paper.get("body", ""))
+    invalidate_papers_cache()
+    return True
 
-    for ref_id in related_paper_ids:
-        if ref_id == new_paper_id:
+
+def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
+    """Mirror a paper's declared relations onto the papers it points at.
+
+    Reciprocity is what keeps a hand-maintained graph from rotting: A's
+    "B is my successor" is only trustworthy if B's frontmatter says "A is my
+    predecessor" with the same type. Doing that by hand is what the old
+    workflow asked for (and rarely got), so it happens on write instead.
+
+    Also regenerates ``related_papers`` on both sides as the projection of the
+    relations, so the legacy field can never drift from the semantics.
+
+    Returns ``{"updated": [ids], "missing": [ids], "derived": [ids]}`` where
+    ``derived`` marks papers whose legacy ``related_papers`` had to be migrated
+    on the fly (they had no relations yet).
+    """
+    if papers_dir is None:
+        papers_dir = PAPERS_DIR
+
+    result = {"updated": [], "missing": [], "derived": []}
+    entries = relations_of(paper)
+    if not entries:
+        return result
+
+    index = relation_index(get_all_papers(papers_dir))
+    self_id, self_short = paper.get("id"), paper.get("short_name", "")
+
+    for entry in entries:
+        other = index.get(entry["target"])
+        if other is None:
+            result["missing"].append(entry["target"])
+            continue
+        path = _paper_path(other, papers_dir)
+        if path is None:
+            result["missing"].append(entry["target"])
             continue
 
-        paper = get_paper_by_id(ref_id, papers_dir)
-        if not paper:
+        back = relations_of(other)
+        if not back and other.get("related_papers"):
+            # Touch-migrate: the reciprocal cannot be added to a legacy paper
+            # without first materialising its own relations, or the projection
+            # below would delete the ids it still carries.
+            back, _ = derive_relations(other, index)
+            result["derived"].append(other["id"])
+
+        back, changed = merge_relation(back, self_id, entry["type"],
+                                       inverse_direction(entry["direction"]),
+                                       note=entry["note"])
+        projection = project_related_papers(back)
+        if changed or other.get("related_papers") != projection:
+            metadata = {k: v for k, v in other.items()
+                        if k not in ("body", "file", "relations", "related_papers")}
+            metadata["relations"] = back
+            metadata["related_papers"] = projection
+            _write_paper(path, metadata, other.get("body", ""))
+            result["updated"].append(other["id"])
+
+    if result["updated"] or result["derived"]:
+        invalidate_papers_cache()
+    return result
+
+
+def sync_graph_edges(paper: dict, papers_dir: Path = None) -> dict:
+    """Keep ``## 后续引用`` sections matching the declared directions.
+
+    Obsidian draws an arrow from the file that *contains* ``[[X]]`` to X. The
+    academic-influence reading (early → late) therefore requires the link to sit
+    in the earlier paper. The old workflow assumed the paper being indexed was
+    the later one and asked the agent to repair non-chronological reads by hand;
+    with a declared direction the link simply goes where the data says.
+
+    Repair scope is deliberately conservative: a link is only *removed* from a
+    section when a declaration exists for that pair and points the other way.
+    Links to papers with no declaration are legacy and left untouched.
+
+    ``peer`` relations produce no edge at all — parallel work has no influence
+    direction, and inventing one is what the arrow convention was fighting.
+    """
+    if papers_dir is None:
+        papers_dir = PAPERS_DIR
+
+    index = relation_index(get_all_papers(papers_dir))
+    by_short = {p.get("short_name", ""): pid for pid, p in index.items() if p.get("short_name")}
+    by_short.update({p.get("title", ""): pid for pid, p in index.items() if p.get("title")})
+
+    # ── desired state ────────────────────────────────────────────────────
+    wanted: dict[int, set[str]] = {}
+    declared: dict[tuple[int, int], dict] = {}
+    for pid, p in index.items():
+        for e in relations_of(p):
+            declared[(pid, e["target"])] = e
+            other_short = index.get(e["target"], {}).get("short_name", "")
+            self_short = p.get("short_name", "")
+            if e["direction"] == "successor" and other_short:
+                wanted.setdefault(pid, set()).add(other_short)      # self is earlier
+            elif e["direction"] == "predecessor" and self_short:
+                wanted.setdefault(e["target"], set()).add(self_short)  # other is earlier
+
+    # ── apply ────────────────────────────────────────────────────────────
+    moved, updated = [], []
+    for pid, want in wanted.items():
+        p = index.get(pid)
+        if p is None:
             continue
-
-        # ⚠️ Timeline check: if existing paper is NEWER than the new paper,
-        # then existing paper should reference the new one with bold text
-        # (in body), NOT receive a [[new_short_name]] backlink (which would
-        # create a wrong-direction edge new→old).
-        existing_year = paper.get("year")
-        if new_paper_year is not None and existing_year is not None:
-            try:
-                if int(existing_year) > int(new_paper_year):
-                    print(
-                        f"[WARNING] Timeline mismatch: existing paper [{ref_id}] "
-                        f"{paper.get('short_name', '?')} (year {existing_year}) is "
-                        f"NEWER than the paper you just indexed "
-                        f"{new_short_name} (year {new_paper_year}). "
-                        f"Skipping auto-backlink to avoid wrong-direction graph edge.\n"
-                        f"  → Fix: the OLDER paper ({new_short_name}) should have a "
-                        f"## 后续引用 [[{paper.get('short_name', '?')}]] section, "
-                        f"and the NEWER paper ({paper.get('short_name', '?')}) should "
-                        f"reference {new_short_name} with bold text only.\n"
-                        f"  → See SKILL.md §4.5 '时间线校验' for details."
-                    )
-                    continue
-            except (ValueError, TypeError):
-                pass
-
-        file_rel = paper.get("file", "")
-        if not file_rel:
+        path = _paper_path(p, papers_dir)
+        if path is None:
             continue
-
-        filepath = papers_dir.parent / file_rel
-        if not filepath.exists():
-            continue
-
-        try:
-            post = frontmatter.load(str(filepath))
-            body = post.content
-
-            if backlink in body:
-                continue
-
-            if "## 后续引用" in body:
-                body = body.rstrip() + f"\n- {backlink}\n"
+        before, existing, after = _split_followup(p.get("body", ""))
+        keep = []
+        for link in existing:
+            tid = by_short.get(link)
+            rel = declared.get((pid, tid)) if tid is not None else None
+            if rel is None or link in want:
+                keep.append(link)          # legacy link, or still correct
             else:
-                body = body.rstrip() + f"\n\n## 后续引用\n\n- {backlink}\n"
-
-            new_post = frontmatter.Post(body, **post.metadata)
-            file_content = frontmatter.dumps(new_post)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(file_content.rstrip() + "\n")
-
-            updated.append(ref_id)
-        except Exception:
-            continue
+                moved.append((pid, link))
+        links = sorted(set(keep) | want)
+        if links != sorted(set(existing)):
+            if links != existing:
+                metadata = {k: v for k, v in p.items() if k not in ("body", "file")}
+                _write_paper(path, metadata, _rebuild_followup(before, links, after))
+                updated.append(pid)
 
     if updated:
         invalidate_papers_cache()
+    return {"updated": updated, "moved": moved}
 
-    return updated
+
+def sync_paper_relations(paper: dict, papers_dir: Path = None) -> dict:
+    """Both halves of the structured-relation write path, in one call.
+
+    Callers that create or update a paper should use this instead of either
+    half: frontmatter without edges leaves the Obsidian graph stale, edges
+    without frontmatter leave the semantics missing.
+
+    Returns a distinctly-named key per half — ``mirrored`` (papers that received
+    a reciprocal entry) vs ``edges_updated`` (papers whose ``## 后续引用`` was
+    rewritten). They answer different questions, and both halves calling their
+    list ``updated`` is how the first version of this function reported the edge
+    target as the mirrored paper.
+    """
+    mirrored = sync_relations(paper, papers_dir)
+    edges = sync_graph_edges(paper, papers_dir)
+    return {
+        "mirrored": mirrored["updated"],
+        "missing": mirrored["missing"],
+        "derived": mirrored["derived"],
+        "edges_updated": edges["updated"],
+        "edges_moved": edges["moved"],
+    }
+
+
+def add_backlinks_to_referenced_papers(new_paper_id: int, new_short_name: str,
+                                       related_paper_ids: list[int],
+                                       papers_dir: Path = None,
+                                       new_paper_year: int = None) -> list[int]:
+    """Deprecated legacy wrapper — use sync_paper_relations().
+
+    Kept because older callers pass a flat id list with no semantics. Direction
+    is derived from years (the best available guess) and the legacy
+    ``related_papers`` entries are migrated on the fly, so the outcome is the
+    same as a declared relation whose direction came from publication order.
+    """
+    if papers_dir is None:
+        papers_dir = PAPERS_DIR
+
+    paper = get_paper_by_id(new_paper_id, papers_dir)
+    if not paper:
+        return []
+
+    index = relation_index(get_all_papers(papers_dir))
+    entries, _ = derive_relations(paper, index)
+    if not entries:
+        return []
+    paper = dict(paper, relations=entries)
+    return sync_relations(paper, papers_dir)["updated"]
 
 
 def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
