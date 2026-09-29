@@ -1,7 +1,9 @@
+import logging
 import chromadb
 from chromadb.utils import embedding_functions
 from pathlib import Path
 from mcp_server.config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_MODEL
+from mcp_server.hf_offline import prefer_cached_model
 from mcp_server.markdown_parser import get_all_papers, parse_paper
 
 
@@ -15,6 +17,12 @@ class ChromaStore:
         if not EMBEDDING_MODEL or EMBEDDING_MODEL == "all-MiniLM-L6-v2":
             self.embedder = embedding_functions.DefaultEmbeddingFunction()
         else:
+            # Must come first: these are environment variables, and
+            # huggingface_hub reads them once, when it is first imported — which
+            # the constructor below does. Without this the model load waits out
+            # a Hub check even when the model is already on disk; see hf_offline.
+            decision = prefer_cached_model(EMBEDDING_MODEL)
+            logging.getLogger("paper_kb_mcp").info(f"Embedder: {decision.reason}")
             self.embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=EMBEDDING_MODEL
             )

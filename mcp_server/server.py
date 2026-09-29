@@ -504,8 +504,12 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
                 "id": request_id,
                 "error": {"code": -32000, "message": str(e)}
             }
-    elif method == "notifications/initialised":
-        # No response for notifications
+    elif method.startswith("notifications/"):
+        # Notifications get no reply, ever. Matching the prefix rather than one
+        # exact spelling is deliberate: this used to read "initialised" (s), so
+        # the client's "notifications/initialized" (z) fell through to the
+        # Method-not-found branch below and answered a notification — with
+        # "id": null, since notifications carry no id.
         return None
     elif method == "ping":
         return {
@@ -616,7 +620,11 @@ async def main():
             params = msg.get("params", {})
 
             response = await handle_request(method, request_id, params)
-            write_response(response)
+            # A JSON-RPC notification has no id and must not be answered, no
+            # matter what the dispatcher returned for it — this is the rule the
+            # handler above cannot enforce on its own.
+            if "id" in msg:
+                write_response(response)
     finally:
         watcher_task.cancel()
         try:
