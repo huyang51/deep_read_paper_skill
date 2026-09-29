@@ -24,7 +24,7 @@
 - 🎚️ **分诊档位**：2 分钟判定读取深度（速览/标准/超长）。**默认标准档**：单上下文一遍通读全文（1M 级窗口下普通论文无需多代理分读）+ 一道局外人 QA 门禁收尾；仅 60 页以上的技术报告/综述走**超长档编排**（3 组并行 + 跨视角矛盾仲裁）
 - 📄 **逐页阅读**论文 PDF，绝不跳过任何内容（含附录）
 - 🖼️ **图文双通道**：文字通道负责全文覆盖与数字溯源，视觉通道按 PDF 坐标几何裁剪图表、逐张视觉核验后嵌入报告——不再"只读文字不看图"
-- 🖥️ **HTML 阅读视图**：每份定稿报告自动渲染为独立 HTML（KaTeX 公式、侧边目录、嵌入原图、暗色模式、打印友好）——由 Markdown 确定性生成，可直接分享给合作者
+- 🖥️ **HTML 阅读视图**：每份定稿报告自动渲染为独立 HTML——公式三档交付（CDN 多镜像 → 单文件离线内嵌 → LaTeX 源码降级）、booktabs 三线表、侧边目录滚动高亮、图表点击放大、明暗双主题、打印友好；中英混排自动加薄空格——由 Markdown 确定性生成，可直接分享给合作者
 - 🧠 **十一维深度分析**：5 个理解维度（问题溯源、方法溯源、通俗解读、实验分析、局限性）+ 3 个审稿人维度（新颖性审计、失败案例、拒稿风险）+ 3 个深度理解维度（反事实检验、隐含假设审计、综合判断）
 - 📝 **生成**含 LaTeX 公式、数据表、声明-证据对照的结构化中文解读报告
 - 💾 **记忆**到 Obsidian 兼容的知识库，含 YAML frontmatter、wikilinks 和 ChromaDB 向量索引
@@ -52,10 +52,13 @@
 
 ```mermaid
 graph TD
-    A["用户: 读这篇论文 + PDF"] --> B["阶段1: 逐页文字提取 + 图表裁剪"]
+    A["用户: 读这篇论文 + PDF"] --> T{"阶段0: 分诊（约2分钟）"}
+    T -->|"速览"| Q["5C 判读卡 → 记忆条目 → 完成"]
+    T -->|"标准 / 超长"| B["阶段1: 逐页文字提取 + 图表裁剪"]
     B --> C["阶段2: 十一维深度分析"]
-    C --> D["阶段3: 生成解读报告"]
+    C --> D["阶段3: 解读报告 + 统一 QA 门禁"]
     C --> E["阶段4: 创建记忆条目"]
+    D --> R["阶段3.6: HTML 阅读视图"]
     D --> F{"知识库中有相关论文?"}
     E --> F
     F -->|"有"| G["阶段5: 跨论文对比"]
@@ -63,6 +66,7 @@ graph TD
     G --> I["洞察文件 + 回链"]
 
     style A fill:#e1f5fe
+    style Q fill:#e1f5fe
     style H fill:#c8e6c9
     style I fill:#fff9c4
 ```
@@ -179,14 +183,34 @@ cp -r vault-template/ /your/knowledge-base/path/
 ```
 
 技能自动完成：
-1. 分诊（约 2 分钟，Keshav 第一遍法）：判定速览 / 标准 / 深读三档，速览档止于 5C 判读卡
+1. 分诊（约 2 分钟，Keshav 第一遍法）：判定速览 / 标准 / 超长三档，速览档止于 5C 判读卡
 2. PyMuPDF 逐页提取（不跳过任何内容，含附录）
 3. 按 PDF 对象坐标几何裁剪图表为高清 PNG，逐张视觉核验后嵌入报告核心图速览
 4. 单上下文一遍通读完成十一维深度分析（超长档：3 组并行 + 矛盾检测与仲裁）
 5. 通过统一 QA 门禁（局外人代理：事实抽查 + 可读性五问）后生成中文解读报告 → `reports/<短名>_解读报告.md`
-6. 创建结构化记忆条目 → `papers/<短名>.md`（记录 read_mode 档位）
-7. ChromaDB 向量化索引
-8. 如果知识库中有相关论文 → 跨论文对比 + 创建洞察文件
+6. 在同目录渲染配套 HTML 阅读视图（阶段 3.6）——`.md` 始终是唯一事实源，改完重渲染即可
+7. 创建结构化记忆条目 → `papers/<短名>.md`（记录 read_mode 档位）
+8. ChromaDB 向量化索引
+9. 如果知识库中有相关论文 → 跨论文对比 + 创建洞察文件
+
+### 分享报告：HTML 阅读视图
+
+HTML 渲染是自动的；编辑 md 后手动重渲染：
+
+```bash
+python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"
+```
+
+| 参数 | 作用 |
+|------|------|
+| *（默认）* | KaTeX 0.16.11 走 CDN，四镜像按序回退（jsDelivr → npmmirror → staticfile → unpkg）；某个镜像被墙自动换下一个，全部失败则公式降级为可读的 LaTeX 源码 |
+| `--fetch-katex` | 一次性把 KaTeX（JS/CSS/字体）下载到本地缓存 |
+| `--embed-katex` | 把缓存中的 KaTeX 内嵌进 HTML——单文件自包含，断网也能正常打开 |
+| `--katex-dir DIR` | 指定本地 KaTeX `dist/` 目录替代缓存 |
+| `--offline` | 完全不加载 KaTeX（公式保留为可读 LaTeX 源码） |
+| `--out FILE` | 输出到别处（默认与 `.md` 同目录同名） |
+
+缓存位置：Windows 为 `%LOCALAPPDATA%\deep-read-paper`，Linux/macOS 为 `~/.cache/deep-read-paper`，可用 `DEEP_READ_CACHE` 覆盖。图片是 `../attachments/` 相对路径、交互 JS 全部内联——除 CDN 档的 KaTeX 外，阅读视图不依赖网络。
 
 ### 搜索知识库
 
@@ -207,6 +231,8 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `paper_find_related` | 查找方法/领域/互补关联论文 |
 | `paper_search_by_method` | 按方法类别检索 |
 | `paper_index_stats` | 获取知识库统计信息 |
+| `paper_index` | 创建/更新论文结构化条目（写入侧，由流程调用，通常无需手写） |
+| `paper_remove` | 从知识库与向量索引中删除一篇论文 |
 | `cite_verify` | 核验"关于其他论文"的断言是否存在（OpenAlex/S2，反幻觉） |
 | `paper_citations` | 论文外部引用脉络：被引数、Top 施引工作（后验影响）、参考文献列表 |
 
@@ -245,7 +271,7 @@ deep_read_paper_skill/
 ├── tools/
 │   ├── index_paper.py           #   命令行论文索引工具
 │   ├── extract_figures.py       #   几何裁剪图片提取（视觉通道）
-│   ├── render_report.py         #   md 报告 → 独立 HTML 阅读视图
+│   ├── render_report.py         #   md 报告 → 独立 HTML 阅读视图（KaTeX CDN / 缓存 / 内嵌三档）
 │   └── verify_graph_arrows.py   #   索引后图谱方向校验
 │
 ├── vault-template/              # Obsidian vault 模板
@@ -253,9 +279,11 @@ deep_read_paper_skill/
 │   ├── index.md                 #   Dataview 动态索引
 │   └── templates/               #   论文记忆和洞察模板
 │
-├── references/                  # 报告和记忆条目模板
+├── references/                  # 报告、记忆与编排模板
 │   ├── report_template.md
-│   └── memory_entry_template.md
+│   ├── memory_entry_template.md
+│   ├── orchestration_prompts.md #   阶段2 多代理任务卡（超长档）+ 统一 QA 卡
+│   └── quickcard_template.md    #   速览档 5C 判读卡
 │
 └── output/                      # deploy.py 生成（自动部署）
 ```
@@ -291,6 +319,7 @@ deep_read_paper_skill/
 | 多模态检索 | FLMR, PreFLMR, ReT, UniIR, AgentKB | Late-interaction 检索范式演进 |
 
 每篇论文报告包含：
+- 与 md 同目录的 **独立 HTML 阅读视图**
 - 顶部的 **30 秒速览卡片**
 - **方法溯源表**——哪些设计来自哪篇前人工作
 - **声明-证据对照**——论文的每个 claim 是否有实验支撑
@@ -355,9 +384,24 @@ PyMuPDF 无法从扫描/图片型 PDF 中提取文字。需先用 OCR 工具（�
 </details>
 
 <details>
+<summary><b>Q: HTML 报告里公式显示成 LaTeX 源码？</b></summary>
+
+KaTeX 默认走 CDN 并四镜像回退；若机器断网或所有镜像都被拦截，公式会降级为可读的 LaTeX 源码（不显示 `$` 噪声），页面也会给出提示。想要完全离线的单文件：
+
+```bash
+# 一次性：把 KaTeX 下载到本地缓存
+python tools/render_report.py --fetch-katex
+# 之后渲染时内嵌 KaTeX（约 700KB，断网可开）
+python tools/render_report.py --md "<报告>.md" --embed-katex
+```
+
+`--offline` 则相反：主动不加载 KaTeX，只保留 LaTeX 源码。
+</details>
+
+<details>
 <summary><b>Q: 可以自定义分析维度吗？</b></summary>
 
-可以——分析流程定义在 `SKILL.md` 中。修改 Phase 1-5 即可增删或重排分析维度，同步更新 `references/report_template.md` 中的报告模板。
+可以——分析流程定义在 `SKILL.md` 中。修改 Phase 0-5 即可增删或重排分析维度，同步更新 `references/report_template.md` 中的报告模板（其中"渲染器认识的结构"一节决定 HTML 阅读视图能否正确排版）。
 </details>
 
 ---
@@ -372,7 +416,7 @@ PyMuPDF 无法从扫描/图片型 PDF 中提取文字。需先用 OCR 工具（�
 | `watchfiles` | ≥0.20 | 文件变化自动增量索引 |
 | `PyMuPDF` | ≥1.23 | PDF 文本提取（由 Claude Code 直接调用） |
 | `sentence-transformers` | ≥2.2 | 多语言 embedding 模型（默认）的加载后端，ChromaDB embedding function 依赖 |
-| `markdown` | ≥3.4 | md → HTML 报告渲染（`tools/render_report.py`） |
+| `markdown` | ≥3.4 | md → HTML 阅读视图渲染（`tools/render_report.py`）；KaTeX 走 CDN 或可选的本地缓存，无需 LaTeX 工具链 |
 
 全部为纯 Python，在 Linux、macOS、Windows 上均可安装。
 
