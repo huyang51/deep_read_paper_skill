@@ -151,9 +151,14 @@ def generate_config():
         print("  [WARN] 该 python 跑不起 MCP server —— 配置写出来也是死的：")
         for m, d in broken.items():
             print(f"         - {m}: {d}")
-        print("         修法：换成装齐依赖的解释器，或装上缺的包；只想跑英文库可把")
-        print(f"         embedding_model 设为 {ONNX_EMBEDDER}"
-              "（ChromaDB 自带 ONNX 嵌入，不需要 torch）。")
+        print("         修法：给本 skill 建一个专用 conda 环境（一次建好，长期复用），")
+        print("         把该环境 python 的绝对路径填进 settings.json 的 python_cmd：")
+        print("           conda create -n paper-kb python=3.10 -y")
+        print("           conda activate paper-kb")
+        print("           PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt")
+        print("         （只想跑英文库、不想装 torch：把 embedding_model 设为 "
+              f"{ONNX_EMBEDDER}，")
+        print("         它走 ChromaDB 自带 ONNX 嵌入；代价是中文语义检索变弱。）")
         print("         注意换 embedding 模型等于换向量空间，已有 .chromadb 需重建。")
     else:
         print(f"  [OK] python 启动自检通过（{len(report)} 个模块可导入）")

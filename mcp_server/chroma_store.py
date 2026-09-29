@@ -21,18 +21,43 @@ class ChromaStore:
         self.collection = None
 
     def init_collection(self):
-        """Get or create the ChromaDB collection."""
+        """Get or create the ChromaDB collection.
+
+        A collection records the embedding function that built it, and ChromaDB
+        refuses to hand it back to a different one — correct, since vectors from
+        two models are not comparable. But the raw failure chain is unreadable:
+        the get raises "Embedding function conflict", then the create fallback
+        raises "Collection [paper_memories] already exists". That is what a user
+        sees after changing `embedding_model`, so name the cause and the fix.
+        """
         try:
             self.collection = self.client.get_collection(
                 name=COLLECTION_NAME,
                 embedding_function=self.embedder,
             )
+            return
         except Exception:
+            pass
+
+        try:
             self.collection = self.client.create_collection(
                 name=COLLECTION_NAME,
                 embedding_function=self.embedder,
                 metadata={"hnsw:space": "cosine"}
             )
+        except Exception as e:
+            # The create failed *and* the name is taken → the collection exists
+            # but was built by a different embedder (1.x returns collection
+            # objects from list_collections; plain names are tolerated).
+            names = [getattr(c, "name", c) for c in self.client.list_collections()]
+            if COLLECTION_NAME in names:
+                raise RuntimeError(
+                    f"向量索引 {CHROMA_DIR} 里的 collection「{COLLECTION_NAME}」是用"
+                    f"别的嵌入模型建的，当前配置是「{EMBEDDING_MODEL}」。换模型等于换"
+                    f"向量空间，旧向量不可复用——删掉该目录后重跑，索引会按当前模型"
+                    f"重建（papers/ 与 relations 不受影响）。"
+                ) from e
+            raise
 
     def _make_embedding_text(self, paper: dict) -> str:
         """Create text for embedding from paper metadata."""

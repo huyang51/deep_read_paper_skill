@@ -1,4 +1,18 @@
-chromadb>=0.4,<1.0
+# Runtime dependencies for this skill (Python 3.10+), one env per machine:
+#   conda create -n paper-kb python=3.10 -y
+#   conda activate paper-kb
+#   PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt
+# PYTHONNOUSERSITE=1 is required: pip otherwise treats packages already present
+# in the user site as satisfied and skips them, producing an env that is not
+# self-contained (ModuleNotFoundError as soon as user site is disabled).
+# Every tool, plus the MCP server and hooks, runs on this env's python; the
+# absolute path goes into settings.json as `python_cmd`.
+
+# 1.x is required, not merely newer: ChromaDB 1.x changed the persisted
+# collection-config schema, and an index written by 1.x cannot be opened by a
+# 0.x client (it dies with KeyError: '_type'), so a 0.x env pointed at an
+# existing vault simply fails to search it.
+chromadb>=1.0,<2.0
 python-frontmatter>=1.0,<2.0
 watchfiles>=0.20,<1.0
 pydantic>=2.0,<3.0
