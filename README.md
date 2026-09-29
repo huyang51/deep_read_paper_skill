@@ -138,10 +138,15 @@ cp settings.example.json settings.json
 #                Run `which python` (Linux/Mac) or `where python` (Windows)
 #                inside the activated env to confirm the path.
 
-# 5. Deploy to your project (still inside the env)
-python deploy.py           # or: paper-kb-deploy
+# 5. Deploy (still inside the env)
+python deploy.py --register    # or: paper-kb-deploy --register
 # This probes python_cmd and prints [WARN] if the interpreter cannot start the
 # server — that warning means the config it just wrote would be dead. Don't skip it.
+#
+# --register adds the MCP server at USER scope (registered once, available from
+# every directory, no /mcp approval). Without it the command is only printed for
+# you to paste yourself. Hooks stay project-scoped, in
+# <project_dir>/.claude/settings.json.
 
 # 6. (Optional) Initialize Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
@@ -149,10 +154,14 @@ cp -r vault-template/ /your/knowledge-base/path/
 # 7. Restart Claude Code
 ```
 
+> **Why `--register` (user scope) instead of a project `.mcp.json`?**
+> A project-scoped `.mcp.json` is a file in a repository, so Claude Code requires you to **approve it once** before anything is launched — that is the boundary that stops "clone a repo" from meaning "run its commands", and the docs are explicit: **"a cloned repository can't approve its own servers."** No skill can approve itself. Until it is approved, **not one tool gets registered**, and the symptom is "those tools don't exist" with no error at all.
+> User scope is added by *your own* `claude mcp add`; that action is the approval, so there is nothing left to confirm with `/mcp`.
+
 > **🔑 How the skill is run: everything goes through that one environment**
 > - **Tool commands you type in a session** (`python tools/migrate_relations.py`, `python tools/verify_graph_arrows.py`, `python tools/index_paper.py`, …) hit whichever `python` is on PATH — so **`conda activate paper-kb` first**, otherwise they land on system Python and die with `ModuleNotFoundError`.
-> - **The MCP server and both hooks need no activation**: `deploy.py` bakes the absolute `python_cmd` path into `.mcp.json` / `.claude/settings.json`.
-> - **The first semantic search downloads the embedding model** (~470 MB, see the table). That one call is slow; later runs hit the local cache.
+> - **The MCP server and both hooks need no activation**: `deploy.py` bakes the absolute `python_cmd` path into the user-scope registration and into `.claude/settings.json`.
+> - **The first start downloads the embedding model** (~470 MB, see the table). That one start is slow; once the model is on disk a start only reads the local cache (~12s) and touches no network.
 
 > **💡 Why a Conda environment**:
 > - Isolates `chromadb` / `torch` / `sentence-transformers` / `PyMuPDF` from your system Python and other projects
@@ -162,7 +171,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > **Common pitfalls**:
 > - Forgot `conda activate paper-kb` → `pip install` lands in another Python, or tool commands hit system Python and fail with `ModuleNotFoundError`
 > - `python_cmd` points to system Python instead of the skill's env → MCP server and hooks die at startup (deploy's preflight prints `[WARN]`)
-> - No `HF_ENDPOINT` set → the model download stalls and a starting MCP server looks dead
+> - No `HF_ENDPOINT` set → the first model download stalls and a starting MCP server looks dead. Once the model is cached this step is gone for good: the server switches itself to offline loading and skips the HuggingFace hub check
 
 ### Configuration (`settings.json`)
 
@@ -387,6 +396,41 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python -m mc
 </details>
 
 <details>
+<summary><b>Q: The MCP tools never show up in Claude Code at all?</b></summary>
+
+This failure is silent — the symptom is simply "those tools do not exist" — so start
+by asking what state the server is in:
+
+```bash
+claude mcp list
+```
+
+- **`Pending approval`** — this server came from a **project-scoped `.mcp.json`** and
+  has not been approved. That gate belongs to repository files and a skill cannot lift
+  it for itself. **The recommended fix is user scope** (`python deploy.py --register`),
+  which is not gated; if you do want it project-scoped, run `/mcp` in Claude Code to
+  confirm it — and make sure no same-named `.mcp.json` is shadowing the user-scope
+  registration (`deploy.py` detects and reports that).
+- **`Failed to connect`** — the server did not answer in time. Claude Code gives each
+  server `MCP_TIMEOUT`, **30 seconds by default**, covering process spawn through the
+  `initialize` handshake; a server that answers later registers no tools at all. The
+  real cause is in the server's stderr:
+
+```bash
+claude --debug=mcp     # the log lands in ~/.claude/debug/<session-id>.txt
+```
+
+Loading the embedding model from the local cache takes about 12s, normally well
+inside the budget. If a machine is markedly slower, check whether the model is cached
+at all (`deploy.py` prints a line when it is) before reaching for a wider budget:
+
+```bash
+MCP_TIMEOUT=60000 claude                   # Windows PowerShell:
+$env:MCP_TIMEOUT="60000"; claude
+```
+</details>
+
+<details>
 <summary><b>Q: Chinese search results are poor?</b></summary>
 
 The default embedding model (`paraphrase-multilingual-MiniLM-L12-v2`) supports both Chinese and English. If you previously had `all-MiniLM-L6-v2` configured (an older default), switch back to `paraphrase-multilingual-MiniLM-L12-v2` in `settings.json` and re-index.
@@ -403,7 +447,7 @@ PyMuPDF cannot extract text from image-based PDFs. Pre-process with OCR tools (e
 
 1. Copy the skill folder to each machine
 2. Update `settings.json` paths
-3. Run `paper-kb-deploy`
+3. Run `python deploy.py --register` **on each machine** — the MCP registration lives in that machine's user-scope config and does not travel with the repo
 4. Sync the vault directory with Git or a shared drive
 </details>
 

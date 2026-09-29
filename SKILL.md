@@ -25,7 +25,8 @@ PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt
 ```
 
 - **会话里敲 `python tools/xxx.py` 之前先 `conda activate paper-kb`**——命令命中的是 PATH 上的 python，不激活就会用系统 Python 跑出 `ModuleNotFoundError`。
-- **MCP server 与两个 hook 不需要激活**：`deploy.py` 已把 `settings.json` 里 `python_cmd` 的绝对路径写进 `.mcp.json` 与 `.claude/settings.json`。
+- **MCP server 与两个 hook 不需要激活**：`deploy.py` 已把 `settings.json` 里 `python_cmd` 的绝对路径写进 user 作用域的 MCP 注册项与项目级 `.claude/settings.json`。
+- **MCP server 用 user 作用域注册**（`python deploy.py --register`），不用项目级 `.mcp.json`：项目级 server 必须手动批准一次才启动，而仓库文件无法替自己批准（"a cloned repository can't approve its own servers"），未批准时工具一个都不注册且不报错。
 - 默认嵌入模型 `paraphrase-multilingual-MiniLM-L12-v2` 需要 torch，**首次调用会从 HuggingFace 下载约 470MB**（国内网络先设 `HF_ENDPOINT=https://hf-mirror.com`，否则会卡住）。
 - 环境不对时 `python deploy.py` 会打印 `[WARN]` 并列出缺哪个模块——照它给的命令建环境，不要靠降级模型绕过。
 

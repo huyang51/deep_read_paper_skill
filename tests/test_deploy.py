@@ -1,23 +1,42 @@
-"""Offline tests for deploy.py's interpreter preflight.
+"""Offline tests for deploy.py's interpreter preflight and MCP registration.
 
-The failure this guards against is silent: deploy renders a valid-looking
+The first failure this guards against is silent: deploy renders a valid-looking
 config for an interpreter that cannot import the server's dependencies, and
 then the MCP server *and* both hooks die at startup with the traceback buried
 in a log nobody reads. It happened for real — the vault pointed at an
 interpreter without torch while `embedding_model` asked for a
 SentenceTransformer model.
 
+The second is the one that hid the server for days: a project-scoped
+`.mcp.json` sits at "Pending approval" until the user clicks it, and a
+repository cannot approve its own servers, so no file deploy writes can lift
+that. User scope is not gated — but it is outranked by project scope, so a
+leftover `.mcp.json` silently puts the gate back.
+
 Run from repo root:  python -m unittest discover -s tests -v
 """
+import contextlib
+import io
+import json
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import deploy  # noqa: E402
 
 BASE_MODULES = {"chromadb", "frontmatter", "watchfiles", "pydantic"}
+
+
+def capture(fn, *args, **kwargs):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(*args, **kwargs)
+    return buf.getvalue()
 
 
 class ProbePythonTest(unittest.TestCase):
@@ -35,6 +54,142 @@ class ProbePythonTest(unittest.TestCase):
         report = deploy.probe_python(sys.executable, "all-MiniLM-L6-v2")
         self.assertNotIn("sentence_transformers", report)
         self.assertTrue(all(v == "ok" for v in report.values()), report)
+
+
+class RegistrationCommandTest(unittest.TestCase):
+    def test_registers_at_user_scope_not_project(self):
+        """User scope is the whole point: project scope is the gated one."""
+        argv = deploy.registration_command("paper_kb_mcp", "D:/skill", "D:/py.exe")
+
+        self.assertEqual(argv[:5], ["claude", "mcp", "add", "--scope", "user"])
+        self.assertIn("paper_kb_mcp", argv)
+
+    def test_locates_the_server_without_cwd(self):
+        """`claude mcp add` has no --cwd, and the server must still be importable.
+
+        config.py resolves settings.json from __file__, and PYTHONPATH is what
+        makes `-m mcp_server` work from whatever directory Claude Code happens
+        to be launched in.
+        """
+        argv = deploy.registration_command("n", "D:/skill", "D:/py.exe")
+
+        self.assertNotIn("cwd", argv)
+        self.assertIn("PYTHONPATH=D:/skill", argv)
+        self.assertEqual(argv[-2:], ["-m", "mcp_server"])
+
+    def test_flags_after_double_dash_reach_the_server(self):
+        """`-m mcp_server` must be the server's argv, not claude's own."""
+        argv = deploy.registration_command("n", "D:/skill", "D:/py.exe")
+
+        self.assertLess(argv.index("--"), argv.index("-m"))
+
+
+class RunnableTest(unittest.TestCase):
+    def test_missing_command_reports_none(self):
+        self.assertIsNone(deploy.runnable(["definitely-not-on-path-xyz"]))
+
+    @unittest.skipUnless(os.name == "nt", "the .cmd shim is a Windows problem")
+    def test_windows_cmd_shim_is_launched_through_cmd(self):
+        """CreateProcess cannot start a .cmd, and npm ships Claude Code as one.
+
+        A bare list would work on a machine with claude.exe and fail on the
+        npm install — the difference being invisible until someone else runs it.
+        """
+        with mock.patch.object(deploy.shutil, "which",
+                               return_value=r"C:\npm\claude.cmd"):
+            self.assertEqual(deploy.runnable(["claude", "mcp", "list"]),
+                             ["cmd.exe", "/c", r"C:\npm\claude.cmd", "mcp", "list"])
+
+    def test_real_executable_is_used_directly(self):
+        with mock.patch.object(deploy.shutil, "which",
+                               return_value=r"C:\bin\claude.exe"):
+            self.assertEqual(deploy.runnable(["claude", "mcp", "list"]),
+                             [r"C:\bin\claude.exe", "mcp", "list"])
+
+
+class ShadowWarningTest(unittest.TestCase):
+    """A project `.mcp.json` outranks user scope (Local > Project > User)."""
+
+    def write_project(self, servers):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = Path(tmp.name)
+        (project / ".mcp.json").write_text(
+            json.dumps({"mcpServers": servers}), encoding="utf-8")
+        return project
+
+    def test_flags_same_named_server(self):
+        project = self.write_project({"paper_kb_mcp": {"command": "py"}})
+
+        out = capture(deploy.warn_if_shadowed, project, "paper_kb_mcp")
+
+        self.assertIn("paper_kb_mcp", out)
+        self.assertIn(".mcp.json", out)
+
+    def test_no_warning_without_a_project_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(capture(deploy.warn_if_shadowed, Path(tmp), "x"), "")
+
+    def test_no_warning_for_a_different_server(self):
+        project = self.write_project({"someone_else": {"command": "py"}})
+
+        self.assertEqual(capture(deploy.warn_if_shadowed, project, "paper_kb_mcp"), "")
+
+    def test_spares_a_file_holding_other_servers(self):
+        """The user's own entries are theirs — name the one to remove, don't
+        tell them to delete the file."""
+        project = self.write_project({"paper_kb_mcp": {}, "mine": {}})
+
+        out = capture(deploy.warn_if_shadowed, project, "paper_kb_mcp")
+
+        self.assertIn("mine", out)
+        self.assertNotIn("rm ", out)
+
+    def test_unreadable_file_is_not_guessed_at(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / ".mcp.json").write_text("{not json", encoding="utf-8")
+            self.assertEqual(capture(deploy.warn_if_shadowed, project, "x"), "")
+
+
+class RegisterMcpServerTest(unittest.TestCase):
+    ARGS = ("paper_kb_mcp", "D:/skill", "D:/py.exe")
+
+    def test_default_only_prints(self):
+        """Printing is the default: registering edits the user's global config."""
+        with mock.patch.object(deploy.subprocess, "run") as run:
+            out = capture(deploy.register_mcp_server, *self.ARGS, False)
+
+        run.assert_not_called()
+        self.assertIn("claude mcp add --scope user", out)
+        self.assertIn("--register", out)
+
+    def test_register_flag_invokes_the_cli(self):
+        with mock.patch.object(deploy.shutil, "which", return_value="claude"), \
+             mock.patch.object(deploy.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout="added", stderr="")
+            out = capture(deploy.register_mcp_server, *self.ARGS, True)
+
+        self.assertEqual(run.call_args[0][0][:2], ["claude", "mcp"])
+        self.assertIn("[OK]", out)
+
+    def test_cli_absent_falls_back_to_printing(self):
+        with mock.patch.object(deploy.shutil, "which", return_value=None), \
+             mock.patch.object(deploy.subprocess, "run") as run:
+            out = capture(deploy.register_mcp_server, *self.ARGS, True)
+
+        run.assert_not_called()
+        self.assertIn("[WARN]", out)
+        self.assertIn("claude mcp add", out)
+
+    def test_cli_failure_is_reported_not_swallowed(self):
+        with mock.patch.object(deploy.shutil, "which", return_value="claude"), \
+             mock.patch.object(deploy.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=1, stdout="", stderr="boom")
+            out = capture(deploy.register_mcp_server, *self.ARGS, True)
+
+        self.assertIn("[WARN]", out)
+        self.assertIn("boom", out)
 
 
 if __name__ == "__main__":

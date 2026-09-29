@@ -1,9 +1,10 @@
 # Packaging metadata for `pip install -e .` / `pip install .`
 #
 # Design notes:
-# - The runtime does NOT require this package to be installed: the deployed
-#   .mcp.json runs `python -m mcp_server` with cwd = skill repo dir, and the
-#   hooks do `sys.path.insert(SKILL_DIR)`. Installing exists to (a) pull in
+# - The runtime does NOT require this package to be installed: the user-scope
+#   MCP registration runs `python -m mcp_server` with PYTHONPATH = skill repo
+#   dir (there is no cwd to rely on at user scope), and the hooks do
+#   `sys.path.insert(SKILL_DIR)`. Installing exists to (a) pull in
 #   dependencies in one command and (b) expose the `paper-kb-deploy` command.
 # - Prefer `pip install -e .` (editable): deploy.py locates templates/ and
 #   settings.json relative to the repo; a non-editable install copies
