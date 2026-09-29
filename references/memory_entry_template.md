@@ -23,7 +23,12 @@ problem_domain: "问题领域"
 keywords: ["关键词1", "关键词2"]
 core_contribution: "一句话核心贡献"
 novelty_level: incremental | substantial | breakthrough
-related_papers: []
+relations:
+  - target: <对方论文ID>
+    type: method_similar | problem_related | complementary | evolutionary
+    direction: predecessor | successor | peer   # 相对本文：对方是本文的前身 / 后续 / 同期
+    note: "一句话关联依据（可留空，但正文 ## 与前人工作的关系 里必须有依据）"
+related_papers: []   # relations 的自动投影（双方 ID 自动互加），请勿手写
 date_read: YYYY-MM-DD
 read_mode: quick | standard | deep   # Phase 0 分诊档位：quick 速览卡；standard 默认档（单上下文一遍通读+统一QA）；deep=超长档（>60页，三组编排+矛盾检测+统一QA）
 aliases: ["别名1", "别名2"]
@@ -31,11 +36,12 @@ tags: [tag1, tag2]
 ---
 ```
 
-## 图谱箭头约定
+## 跨论文关系与图谱箭头约定
 
-- **箭头方向**：旧论文 → 新论文（学术影响流向）
-- **新论文 body**：引用旧论文时统一使用**加粗文本**（如 `**FLMR**`），不使用 wikilink。这避免产生新→旧的反向图谱边
-- **旧论文 body**：系统在创建新论文时自动在旧论文中追加 `## 后续引用` 小节，包含指向新论文的 `[[wikilink]]`，形成旧→新的图谱箭头
+- **`relations` 是唯一事实源**：`target`（对方 ID）/ `type`（method_similar | problem_related | complementary | evolutionary）/ `direction`（相对本文：predecessor | successor | peer）/ `note`。规则见 SKILL.md §4.5
+- **箭头方向**：旧论文 → 新论文（学术影响流向）。由 `direction` 推导——边写在被声明为 `successor` 的一方
+- **`related_papers` 与 `## 后续引用` 都是投影**：由脚本在写入时自动同步（互指条目 + 图谱边），**不要手写**
+- **引用 vault 内已有论文**：统一使用**加粗文本**（如 `**FLMR**`），不使用 wikilink——手写 wikilink 会造成重复边或方向错误的边
 - **未入库的论文或方法**：同样使用加粗文本（如 `**CLIP**`），避免在图谱中产生幽灵节点
 
 ---
@@ -52,7 +58,7 @@ tags: [tag1, tag2]
 > - 方法的核心思想
 > - 方法的来源（原创/基于什么改进）
 > - 关键创新点（1-3条）
-> - 与最相关的前人工作的区别（统一用加粗文本，系统自动在旧论文中添加回链 wikilink 来生成图谱箭头）
+> - 与最相关的前人工作的区别（统一用加粗文本；图谱边由 `relations` 驱动、脚本写入旧论文的 `## 后续引用`）
 
 - **新颖性定位**: [incremental / substantial / breakthrough] — [一句话理由，引用 4.5.1 的判定]
 
@@ -76,7 +82,7 @@ tags: [tag1, tag2]
 
 ## 与前人工作的关系
 
-- **基座方法**: **基座论文名**（加粗文本；系统根据 `related_papers` 自动在旧论文中创建回链 wikilink） — [关系说明]
+- **基座方法**: **基座论文名**（加粗文本；本文 frontmatter 的 `relations` 里对它有 `direction: predecessor` 声明，图谱边由此生成） — [关系说明]
 - **竞争方法**: **竞争论文名**（加粗文本） — [关系说明]
 - **继承自**: [核心思想/技术的来源]
 

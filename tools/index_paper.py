@@ -16,6 +16,11 @@ Usage:
     --body_file "/path/to/body.md"
 
 Output: JSON on stdout (ASCII-safe).
+
+Exit codes: 0 = paper file + relations written (a failed vector index is
+reported inside the JSON as ``vector_index`` + ``warning``, not as a non-zero
+exit, because the vault-side result is durable either way) | 1 = bad body file,
+malformed ``--relations`` JSON, or an unwritable paper file.
 """
 import sys
 import json
@@ -33,8 +38,9 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
 from mcp_server.config import PAPERS_DIR
-from mcp_server.markdown_parser import create_paper_file, parse_paper, add_backlinks_to_referenced_papers
+from mcp_server.markdown_parser import create_paper_file, parse_paper, sync_paper_relations
 from mcp_server.chroma_store import ChromaStore
+from mcp_server.relations import relations_of
 
 
 def main():
@@ -50,7 +56,8 @@ def main():
     parser.add_argument("--keywords", default="", help="Comma-separated keywords")
     parser.add_argument("--core_contribution", default="", help="One-sentence core contribution")
     parser.add_argument("--novelty_level", default="", choices=["", "incremental", "substantial", "breakthrough"], help="Novelty level: incremental | substantial | breakthrough")
-    parser.add_argument("--related_papers", default="", help="Comma-separated related paper IDs")
+    parser.add_argument("--relations", default="", help='JSON array of structured relations: [{"target":3,"type":"method_similar","direction":"predecessor","note":"..."}] — type: method_similar|problem_related|complementary|evolutionary; direction: predecessor|successor|peer')
+    parser.add_argument("--related_papers", default="", help="Comma-separated related paper IDs (legacy: prefer --relations)")
     parser.add_argument("--date_read", default=date.today().isoformat(), help="Read date YYYY-MM-DD")
     parser.add_argument("--read_mode", default="standard", choices=["quick", "standard", "deep"], help="Phase-0 triage mode recorded in frontmatter")
     parser.add_argument("--aliases", default="", help="Comma-separated aliases for Obsidian graph display and search")
@@ -76,6 +83,23 @@ def main():
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     related = [int(r.strip()) for r in args.related_papers.split(",") if r.strip().isdigit()]
 
+    # Structured relations may also be passed as a path to a JSON file — that
+    # keeps multi-relation papers readable (and avoids a shell-quoting lottery
+    # on Windows) while staying a single argument.
+    relations = []
+    if args.relations:
+        raw_relations = args.relations
+        candidate = Path(raw_relations)
+        if candidate.is_file():
+            raw_relations = candidate.read_text(encoding="utf-8")
+        try:
+            relations = json.loads(raw_relations)
+        except json.JSONDecodeError as e:
+            print(json.dumps({"status": "error",
+                              "message": f"--relations 不是合法 JSON：{e}"},
+                             ensure_ascii=False))
+            sys.exit(1)
+
     paper_data = {
         "id": args.paper_id,
         "title": args.title,
@@ -88,6 +112,7 @@ def main():
         "keywords": keywords,
         "core_contribution": args.core_contribution,
         "novelty_level": args.novelty_level,
+        "relations": relations,
         "related_papers": related,
         "date_read": args.date_read,
         "read_mode": args.read_mode,
@@ -103,34 +128,59 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1)
 
-    # Index in ChromaDB
     paper = parse_paper(filepath)
-    if paper:
+    if not paper:
+        print(json.dumps({"status": "error",
+                          "message": "Failed to parse created paper file"},
+                         ensure_ascii=False))
+        sys.exit(1)
+
+    # Relations come FIRST: the frontmatter entries and the graph edges are the
+    # durable part of an index, and must land even when the vector index cannot
+    # be built (missing embedding model, offline download, broken store).
+    #
+    # Mirror the declared relations onto the papers this one points at
+    # (reciprocal frontmatter + the related_papers projection) and place the
+    # Obsidian graph edges by DECLARED direction — reading order no longer
+    # decides which way an arrow points, so non-chronological reads need no
+    # manual repair (the old add_backlinks_to_referenced_papers assumed the
+    # paper being indexed was the newest).
+    sync = sync_paper_relations(paper) if relations_of(paper) else {}
+
+    result = {
+        "status": "ok",
+        "paper_id": paper["id"],
+        "file": str(filepath),
+        "message": f"Paper indexed: {paper.get('title')}"
+    }
+    if sync:
+        result["relations_synced"] = {
+            "mirrored_to": sync.get("mirrored", []),
+            "unresolved_targets": sync.get("missing", []),
+            "legacy_migrated": sync.get("derived", []),
+            "graph_edges_updated": sync.get("edges_updated", []),
+        }
+
+    warnings = []
+    if sync.get("missing"):
+        warnings.append(
+            f"relations 指向的论文 {sync['missing']} 不在库中——先在 vault 里"
+            f"索引对方论文，再重跑一次同步（关系与图谱边才会补齐）。"
+        )
+
+    try:
         store = ChromaStore()
         store.init_collection()
         store.upsert_paper(str(paper["id"]), paper)
+        result["vector_index"] = "ok"
+    except Exception as e:
+        # Degrade instead of crashing: the vault file and its relations are
+        # already on disk, only semantic search is unavailable until re-indexed.
+        result["vector_index"] = f"failed: {type(e).__name__}: {e}"
+        warnings.append(f"向量索引失败（论文文件与关系已正常写入，语义检索暂不可用）：{e}")
 
-        # Add reverse wikilinks from old papers → new paper so Obsidian graph
-        # arrows show the direction of academic influence (old → new).
-        # NOTE: When reading papers NON-chronologically, the script will now
-        # warn and skip — manually fix the direction per SKILL.md §4.5.
-        new_id = paper["id"]
-        short_name = paper.get("short_name", "")
-        new_year = paper.get("year")
-        related = paper.get("related_papers", [])
-        if not args.paper_id and short_name and related:
-            add_backlinks_to_referenced_papers(
-                new_id, short_name, related, new_paper_year=new_year
-            )
-
-        result = {
-            "status": "ok",
-            "paper_id": paper["id"],
-            "file": str(filepath),
-            "message": f"Paper indexed: {paper.get('title')}"
-        }
-    else:
-        result = {"status": "error", "message": "Failed to parse created paper file"}
+    if warnings:
+        result["warning"] = " ".join(warnings)
 
     print(json.dumps(result, ensure_ascii=False))
 

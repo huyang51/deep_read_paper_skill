@@ -29,7 +29,7 @@
 - 🧭 **按类型路由**：分析前先判论文类型（方法/理论/综述/基准/系统/报告），再让十一维按类型变形——理论论文审证明结构（假设必要性、证明完整性），综述审覆盖度与分类轴，数据集审标注一致性与泄漏，系统审测法公平性。类型只改每个维度"问什么、拿什么当证据"，**不减少维度数，也不放松逐页全读**
 - 📝 **生成**含 LaTeX 公式、数据表、声明-证据对照的结构化中文解读报告
 - 💾 **记忆**到 Obsidian 兼容的知识库，含 YAML frontmatter、wikilinks 和 ChromaDB 向量索引
-- 🔗 **自动关联**论文——发现方法相似/领域相通/互补关系
+- 🔗 **关系结构化**——每条跨论文关系在 frontmatter 里声明类型（方法相似/问题相通/互补/发展）与方向（前身/后续/同期）；对方论文的互指条目、`related_papers` 投影、Obsidian 图谱边全部由声明推导，**箭头方向跟着数据走，不跟着阅读顺序走**（非时间顺序阅读不再需要手工搬边）
 - ✅ **外部核验**——报告中关于其他论文的断言先经 OpenAlex/Semantic Scholar 验证（`cite_verify`），发表满 1 年的论文自动补"后验影响"（`paper_citations`）；核验不过就降级标注，杜绝张冠李戴。报告定稿前再由 `tools/verify_refs.py` 对正文点名的全部外部工作跑一遍**存在性门**，产出核验台账粘进 §6——含一条硬性诚实规则：**外部库未收录 ≠ 不存在**，查无记录绝不写成"伪造"
 - 📊 **统计严谨性台账**——逐条盘比较类数字断言的统计支撑（种子/重复次数、检验方式与检验单元、Δ 与已报波动的量级、选择空间），缺口标 `[原文未交代]` 且**只当披露缺口**："论文没报"绝不写成"没做/不显著/复现失败"
 - 💡 **创新建议**：跨论文研究方向，含具体技术可行性分析
@@ -232,10 +232,10 @@ python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"
 |------|------|
 | `paper_search` | 通过 ChromaDB 语义搜索（支持中英文） |
 | `paper_get` | 按 ID 获取论文完整信息 |
-| `paper_find_related` | 查找方法/领域/互补关联论文 |
+| `paper_find_related` | 查找关联论文——已声明关系优先，其次旧 `related_papers`，再次关键词推断候选（每条结果带 `source` / `relation_type` / `direction`） |
 | `paper_search_by_method` | 按方法类别检索 |
 | `paper_index_stats` | 获取知识库统计信息 |
-| `paper_index` | 创建/更新论文结构化条目（写入侧，由流程调用，通常无需手写） |
+| `paper_index` | 创建/更新论文结构化条目，含 `relations` 声明（写入侧，由流程调用，通常无需手写）；同步互指条目与图谱边 |
 | `paper_remove` | 从知识库与向量索引中删除一篇论文 |
 | `cite_verify` | 核验"关于其他论文"的断言是否存在（OpenAlex/S2，反幻觉） |
 | `paper_citations` | 论文外部引用脉络：被引数、Top 施引工作（后验影响）、参考文献列表 |
@@ -262,7 +262,8 @@ deep_read_paper_skill/
 ├── mcp_server/                  # MCP Server（ChromaDB 向量索引 + 9 个工具）
 │   ├── server.py                #   JSON-RPC 主循环 + 工具调度
 │   ├── chroma_store.py          #   向量索引管理（增删改查）
-│   ├── markdown_parser.py       #   YAML frontmatter 解析 + 自动回链
+│   ├── markdown_parser.py       #   YAML frontmatter + 关系同步（互指条目、投影、图谱边）
+│   ├── relations.py             #   关系规则层：类型/方向词表、互指、校验
 │   ├── cross_refs.py            #   跨论文关联发现
 │   ├── config.py                #   读取 settings.json
 │   ├── models.py                #   Pydantic 输入输出模型
@@ -277,7 +278,8 @@ deep_read_paper_skill/
 │   ├── extract_figures.py       #   几何裁剪图片提取（视觉通道）
 │   ├── render_report.py         #   md 报告 → 独立 HTML 阅读视图（KaTeX CDN / 缓存 / 内嵌三档）
 │   ├── verify_refs.py           #   点名外部工作的批量存在性门（§6 核验台账）
-│   └── verify_graph_arrows.py   #   索引后图谱方向校验
+│   ├── verify_graph_arrows.py   #   图谱体检：关系完整性 + 箭头方向 + 正文依据
+│   └── migrate_relations.py     #   旧 vault → 结构化 relations（默认只出计划）
 │
 ├── vault-template/              # Obsidian vault 模板
 │   ├── .obsidian/               #   图谱 + 属性面板 + Dataview 预设
@@ -307,10 +309,12 @@ deep_read_paper_skill/
 
 ### 知识图谱约定
 
-- **箭头方向**：旧论文 → 新论文（学术影响流向）
-- **前向引用**（新论文 body 中）：使用**加粗文本**（`**SayPlan**`），不用 wikilink——避免反向图谱边
-- **回链**（旧论文 body 中）：系统自动创建 `## 后续引用` 小节，含 `[[wikilink]]`
+- **`relations` 是唯一事实源**：每条关系声明 `target` / `type` / `direction` / `note`，`direction` 相对本文（`predecessor` = 对方更早，`successor` = 对方更晚，`peer` = 同期并行）
+- **其余一切都是推导出来的**：对方论文的互指条目、双方 `related_papers` 投影、`## 后续引用` 图谱边，都在索引时自动写入——声明关系就是全部工作
+- **箭头方向**：旧论文 → 新论文（学术影响流向）。同步按声明方向落边，非时间顺序阅读无需手工修正；`peer` 关系不产生边
+- **正文引用**：使用**加粗文本**（`**SayPlan**`），不用 wikilink——手写 wikilink 会造成重复边或反向边
 - **未入库论文/方法**：同样使用加粗文本，避免幽灵节点
+- **旧 vault**：`python tools/migrate_relations.py` 出计划（不写盘），`--apply` 落盘；`python tools/verify_graph_arrows.py` 体检关系完整性、箭头方向与正文依据
 
 ---
 
