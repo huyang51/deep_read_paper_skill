@@ -30,7 +30,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
 - 🔗 **Connect** papers automatically — discovers methodological, topical, and complementary relationships
-- ✅ **Verify** claims about other papers against OpenAlex/Semantic Scholar (`cite_verify`), and reports posterior impact via citation data (`paper_citations`) — external assertions never go unchecked into a report
+- ✅ **Verify** claims about other papers against OpenAlex/Semantic Scholar (`cite_verify`), and reports posterior impact via citation data (`paper_citations`). Before the report is finalized, `tools/verify_refs.py` runs an **existence gate** over every externally named work and appends a verification ledger to §6 — with a hard honesty rule: *not indexed ≠ does not exist*, so a missing record is never rendered as "fabricated"
 - 💡 **Innovate** via cross-paper research directions with concrete technical feasibility analysis
 
 > **TL;DR**: Point to a PDF and say "read this paper." Everything else happens automatically.
@@ -274,6 +274,7 @@ deep_read_paper_skill/
 │   ├── index_paper.py           #   CLI paper indexer
 │   ├── extract_figures.py       #   Geometry-based figure cropping (visual channel)
 │   ├── render_report.py         #   md report → standalone HTML reading view (KaTeX CDN / cache / embed)
+│   ├── verify_refs.py           #   Batch existence gate for externally named works (§6 ledger)
 │   └── verify_graph_arrows.py   #   Post-index graph direction check
 │
 ├── vault-template/              # Obsidian vault starter kit

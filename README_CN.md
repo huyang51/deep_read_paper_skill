@@ -30,7 +30,7 @@
 - 📝 **生成**含 LaTeX 公式、数据表、声明-证据对照的结构化中文解读报告
 - 💾 **记忆**到 Obsidian 兼容的知识库，含 YAML frontmatter、wikilinks 和 ChromaDB 向量索引
 - 🔗 **自动关联**论文——发现方法相似/领域相通/互补关系
-- ✅ **外部核验**——报告中关于其他论文的断言先经 OpenAlex/Semantic Scholar 验证（`cite_verify`），发表满 1 年的论文自动补"后验影响"（`paper_citations`）；核验不过就降级标注，杜绝张冠李戴
+- ✅ **外部核验**——报告中关于其他论文的断言先经 OpenAlex/Semantic Scholar 验证（`cite_verify`），发表满 1 年的论文自动补"后验影响"（`paper_citations`）；核验不过就降级标注，杜绝张冠李戴。报告定稿前再由 `tools/verify_refs.py` 对正文点名的全部外部工作跑一遍**存在性门**，产出核验台账粘进 §6——含一条硬性诚实规则：**外部库未收录 ≠ 不存在**，查无记录绝不写成"伪造"
 - 💡 **创新建议**：跨论文研究方向，含具体技术可行性分析
 
 > **一句话**：指一下 PDF 说"读这篇论文"，剩下的一切自动完成。
@@ -275,6 +275,7 @@ deep_read_paper_skill/
 │   ├── index_paper.py           #   命令行论文索引工具
 │   ├── extract_figures.py       #   几何裁剪图片提取（视觉通道）
 │   ├── render_report.py         #   md 报告 → 独立 HTML 阅读视图（KaTeX CDN / 缓存 / 内嵌三档）
+│   ├── verify_refs.py           #   点名外部工作的批量存在性门（§6 核验台账）
 │   └── verify_graph_arrows.py   #   索引后图谱方向校验
 │
 ├── vault-template/              # Obsidian vault 模板

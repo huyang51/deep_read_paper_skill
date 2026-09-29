@@ -53,7 +53,7 @@ description: |-
 - [ ] 报告中所有前人工作都有"一句话定位"（不是只给引用编号）
 - [ ] 论文的方法/架构图已以**图片形式**嵌入报告（纯理论论文无图除外），且核心图速览每个解读块都写满了
 - [ ] 每张嵌图的解读结论都来自**亲眼 Read 过的裁图**，不是凭正文转述（1.3 视觉核验闭环已执行）
-- [ ] 报告中每个**关于其他论文**的事实断言都通过了 `cite_verify`（带核验出处标注），或已显式降级为【未核验——仅模型记忆】
+- [ ] 报告中每个**关于其他论文**的事实断言都通过了 `cite_verify`（带核验出处标注），或已显式降级为【未核验——仅模型记忆】；§6 存在性台账已由 `tools/verify_refs.py` 产出且覆盖正文点名的全部外部工作（❓/⏸ 行未被写成"不存在"）
 - [ ] §1.4 思维链每一环都有证据标注（原文明述/据数据推断/重构-原文未交代），无一处把推断冒充为作者说过的话
 - [ ] 基础知识地图（≤8 概念：定义+接线+深度）已填；每个数据集有卡片和样本示例（或明写给不出）；每个基线有定位与公平性分析、缺席强基线已回答
 - [ ] §2.8 方法深入讲解已完成（伪代码/复杂度/数值细节/边界情形）——报告不止通俗版；训练资源账本已填（原文交代值或带出处的区间估算）
@@ -230,6 +230,11 @@ python "<skill_dir>/tools/extract_figures.py" \
 >    - ⚠️ 特例（实战教训）：notes 含 `identifier unresolved`（常见于 arXiv 早期论文：OpenAlex 覆盖缺口 + S2 限流）时，`not_found` **不是反证**——按 DEFER 处理：换标识符（去作者重试/补 DOI）或稍后再试一轮；仍失败才降级【未核验】，且报告标注"外部库覆盖有限"
 >    - `network_error` → 标注 `【外部核验不可用】`，流程继续，不得凭空补全
 > 3. 论文发表满 1 年以上时，对**当前论文本身**调用 `paper_citations` 填写报告 §4.10"后验影响"（谁在引用、有无扩展/质疑迹象——只允许基于返回的施引工作标题/venue 陈述，**禁止**推断编造"复现失败"之类结论）。arXiv 论文优先传 `arxiv_id`；若返回解析失败提示（S2 限流），改用 `query=<论文完整标题>` 重试。
+> 4. **报告点名的外部工作存在性门（§6 台账，报告定稿前跑一次）**：报告里**点名**的外部工作（基座方法、基线、同期工作、反事实里的"更强基线"）逐条列账，一条命令批量核验：
+>    ```bash
+>    python "<skill_dir>/tools/verify_refs.py" --refs "<清单文件>" --out "<vault>/reports/{short_name}_cite_ledger.json" --md "<vault>/reports/{short_name}_引用核验.md"
+>    ```
+>    清单每行 `标题 | 作者 | 年份 | doi:/arxiv:`（作者/年份**照论文参考文献原样填**——它们就是被交叉核对的字段；只给标题等于放弃错配检测）。产出 `cite_ledger.json`（机器可读）+ 可直接粘进报告 §6 的 Markdown 表；退出码 2 = 有行网络失败/待重试，重跑这些行。三态判定：**✅ 存在**（标题级命中且作者一致；年份不符就地注明——OpenAlex 合并版记录常标再索引年，不是错配证据）/ **⚠️ 疑似错配**（标题级候选里都没有自报作者——可能是标题形近的另一篇；报告展示分歧，不得静默采信任一方）/ **❓ 未收录**（外部库未覆盖，**不等于不存在**——禁止写成"不存在/伪造"，换标识符重试或标【未核验——仅模型记忆】）。
 
 ### 2.1 问题溯源分析
 
@@ -457,6 +462,8 @@ python "<skill_dir>/tools/extract_figures.py" \
 三组维度卡回收后，主会话通读并**按模板装配成报告**（装配不是拼接：过渡与衔接由主会话完成）。装配时**逐项核对 `orchestration_prompts.md` 的六对张力表**；分歧三选一：仲裁卡裁决 / 写入"⚠️ 矛盾与仲裁记录"节 / 确认某卡有误（修正留痕）。**禁止静默择一。** standard 档跳过本节（单上下文无维度卡），主会话自查张力后直接定稿。
 
 ### 3.4 统一 QA 门禁（standard / 超长档收尾各执行一次，不可跳过）
+
+**QA 派发前**先跑 Phase 2"外部断言核验"第 4 条的存在性门（`tools/verify_refs.py`），产出台账并入报告 §6——QA 事实面第 3 项要对照它，台账缺席 = 该项直接 REWORK。
 
 报告定稿前派发**一个**全新上下文的审计代理（任务卡见 `orchestration_prompts.md`"统一 QA 卡"）——事实面（数字/锚点抽查 15 处、三态覆盖、外部核验覆盖、图解读来源）、可读面（陌生研究生五问、术语抽查 6 处）与类型面（按『类型路由』核对：变化维度是否已按类型回答、不适用子项是否写明原因）**合并一趟完成**。REWORK 项修复后**只复审失败项一次**；仍有未决 → 如实写入"✅ 验收记录"节。**QA 未通过不得进入 Phase 4。**
 
@@ -734,7 +741,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 报告模板：`references/report_template.md`
 - 记忆条目模板：`references/memory_entry_template.md`
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3；单元测试：`tests/test_extract_figures.py`）
-- 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`，离线测试 `tests/test_cite_api.py`；使用规则见 Phase 2"外部断言核验"）
+- 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`，离线测试 `tests/test_cite_api.py`；使用规则见 Phase 2"外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见 Phase 2"外部断言核验"第 4 条；测试 `tests/test_verify_refs.py`）
 - HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → 同名 .html，KaTeX/目录/嵌图；测试 `tests/test_render_report.py`；用法见 Phase 3.6）
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）
 - 超长档编排任务卡：`references/orchestration_prompts.md`（三组维度卡 + 分页硬契约 + 装配矛盾检测 + 统一 QA 卡 + 仲裁卡；仅 >60 页或点名编排时加载，普通论文用 standard 档不需本文件）
