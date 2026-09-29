@@ -95,41 +95,51 @@ graph TD
 
 ## 快速开始
 
-### 前置条件
+### 环境要求
 
-- **Claude Code**（启用 skills 功能）
-- **Python 3.10+**
-- **Obsidian**（可选——用于知识图谱可视化）
-- **PyMuPDF** 支持 Linux/macOS/Windows
+| 项 | 要求 | 说明 |
+|---|---|---|
+| **Python** | **3.10+** | 与 `pyproject.toml` 的 `requires-python` 一致 |
+| **Conda**（Anaconda / Miniconda） | 任意版本 | 本 skill **要求一个专用环境**（下称 `paper-kb`）——不要装进 base，也不要跟别的项目共用 |
+| **磁盘** | 约 3 GB | CPU 版 torch + 嵌入模型 + 依赖 |
+| **网络** | 首次运行需下载嵌入模型 | 默认模型 `paraphrase-multilingual-MiniLM-L12-v2` 约 470 MB，从 HuggingFace 拉取；国内网络请先设 `HF_ENDPOINT=https://hf-mirror.com`，否则会卡在下载 |
+| **Claude Code** | 启用 skills 功能 | |
+| **Obsidian** | 可选 | 只用于知识图谱可视化 |
+
+> 依赖清单只有一个事实源：仓库根的 **`requirements.txt`**（装什么、为什么装，注释都写在里面）。
 
 ### 安装
-
-> ⚠️ **强烈建议**：在独立的 Conda 环境中安装，避免与本地其他 Python 项目依赖冲突。
 
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/huyang51/deep_read_paper_skill.git
 cd deep_read_paper_skill
 
-# 2. 创建并激活 Conda 环境（每台机器只需做一次）
+# 2. 创建并激活 skill 专用环境（每台机器只需做一次）
 conda create -n paper-kb python=3.10 -y
 conda activate paper-kb
 
-# 3. 在激活的 conda 环境中安装 skill（一次性装齐全部依赖）
-pip install -e .
+# 3. 在激活的环境里装依赖
+#    PYTHONNOUSERSITE=1 不能省：pip 会把用户目录（user site）里已有的包当成
+#    "已满足"而跳过，装出来的环境不自足——一旦屏蔽 user site 就 ModuleNotFoundError。
+#    Windows PowerShell:  $env:PYTHONNOUSERSITE=1; python -m pip install -r requirements.txt
+PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt
+#    （`pip install -e .` 等价，依赖同样读 requirements.txt）
 
 # 4. 由模板创建并编辑 settings.json（填写 3 个必填项）
 cp settings.example.json settings.json
 # - vault_dir:   存储报告和记忆条目的目录
 # - project_dir: 你的 Claude Code 项目根目录
-# - python_cmd:  conda 环境中 python 的**绝对路径**，例如
+# - python_cmd:  **第 2 步那个环境**里 python 的绝对路径，例如
 #                - Linux/Mac:  "$(conda info --base)/envs/paper-kb/bin/python"
 #                - Windows:    "%USERPROFILE%\anaconda3\envs\paper-kb\python.exe"
-#                在激活的 conda 环境中执行 `which python`（Linux/Mac）
-#                或 `where python`（Windows）可获取该路径。
+#                在激活的环境中执行 `which python`（Linux/Mac）
+#                或 `where python`（Windows）即可获取该路径。
 
-# 5. 部署到你的项目（仍在 conda 环境中）
-paper-kb-deploy            # 或：python deploy.py
+# 5. 部署到你的项目（仍在激活的环境中）
+python deploy.py           # 或：paper-kb-deploy
+# 这一步会拿 python_cmd 做启动自检，解释器缺依赖会直接 [WARN]——别忽略它，
+# 那意味着写出去的 MCP 配置是死的。
 
 # 6. （可选）初始化 Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
@@ -137,15 +147,20 @@ cp -r vault-template/ /your/knowledge-base/path/
 # 7. 重启 Claude Code
 ```
 
+> **🔑 运行方式：本 skill 的一切都要用这个环境的 python 跑**
+> - **会话里手动敲的工具命令**（`python tools/migrate_relations.py`、`python tools/verify_graph_arrows.py`、`python tools/index_paper.py` …）命中的是当前 PATH 上的 python —— **先 `conda activate paper-kb` 再敲**，否则会用系统 Python 跑出 `ModuleNotFoundError`。
+> - **MCP server 与两个 hook 不需要激活**：`deploy.py` 已把 `python_cmd` 的绝对路径写死进 `.mcp.json` / `.claude/settings.json`。
+> - **首次语义检索会下载嵌入模型**（约 470 MB，见上表），那一次慢是正常的，之后走本地缓存。
+
 > **💡 为什么要用 Conda 环境**：
-> - 将 `chromadb` / `pydantic` / `PyMuPDF` 等依赖与系统 Python 及其他项目隔离
+> - 将 `chromadb` / `torch` / `sentence-transformers` / `PyMuPDF` 等依赖与系统 Python 及其他项目隔离
 > - 升级 / 卸载本 skill 时不会影响其他项目
-> - 跨机器复现：只需 `pip freeze > requirements.txt` + `pip install -r requirements.txt`
+> - 换机器复现：`pip install -r requirements.txt` 一条命令装齐
 
 > **常见坑**：
-> - 忘记 `conda activate paper-kb` → `pip install` 装到了系统 Python，hooks 报 `ModuleNotFoundError`
-> - `settings.json` 中 `python_cmd` 指向系统 Python 而非 conda 环境 → 同样的报错
-> - 解决：在激活的 conda 环境中执行 `which python`（Linux/Mac）或 `where python`（Windows），将绝对路径填入 `python_cmd`
+> - 忘记 `conda activate paper-kb` → `pip install` 装到了别的 Python，或跑工具时命中系统 Python，报 `ModuleNotFoundError`
+> - `settings.json` 中 `python_cmd` 指向系统 Python 而非 skill 环境 → MCP server 与 hooks 启动即崩（`deploy.py` 的自检会 [WARN]）
+> - 没设 `HF_ENDPOINT` → 模型下载卡住，MCP server 启动时像"死"了一样
 
 ### 配置 (`settings.json`)
 

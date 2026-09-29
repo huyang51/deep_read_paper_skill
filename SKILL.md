@@ -14,6 +14,21 @@ description: |-
 
 适用于 AI/ML/CV/NLP 等领域的学术论文，也可通用于任何有方法、实验和公式的学术文献。
 
+## 运行环境（前置，先满足再动手）
+
+本 skill 的工具链跑在**它自己的 conda 环境**里（约定名 `paper-kb`），依赖清单的唯一事实源是仓库根的 `requirements.txt`：
+
+```bash
+conda create -n paper-kb python=3.10 -y        # 每台机器一次
+conda activate paper-kb
+PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt
+```
+
+- **会话里敲 `python tools/xxx.py` 之前先 `conda activate paper-kb`**——命令命中的是 PATH 上的 python，不激活就会用系统 Python 跑出 `ModuleNotFoundError`。
+- **MCP server 与两个 hook 不需要激活**：`deploy.py` 已把 `settings.json` 里 `python_cmd` 的绝对路径写进 `.mcp.json` 与 `.claude/settings.json`。
+- 默认嵌入模型 `paraphrase-multilingual-MiniLM-L12-v2` 需要 torch，**首次调用会从 HuggingFace 下载约 470MB**（国内网络先设 `HF_ENDPOINT=https://hf-mirror.com`，否则会卡住）。
+- 环境不对时 `python deploy.py` 会打印 `[WARN]` 并列出缺哪个模块——照它给的命令建环境，不要靠降级模型绕过。
+
 ## 核心理念
 
 - **追问"为什么"**：不止复述内容，更要解释作者每个选择背后的动机

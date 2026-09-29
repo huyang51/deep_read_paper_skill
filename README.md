@@ -95,42 +95,53 @@ graph TD
 
 ## Quick Start
 
-### Prerequisites
+### Requirements
 
-- **Claude Code** (with skills enabled)
-- **Python 3.10+**
-- **Obsidian** (optional — for graph visualization)
-- **PyMuPDF** works on Linux/macOS/Windows
+| Item | Requirement | Notes |
+|------|-------------|-------|
+| **Python** | **3.10+** | Matches `requires-python` in `pyproject.toml` |
+| **Conda** (Anaconda / Miniconda) | any | The skill **requires its own environment** (named `paper-kb` below) — not base, not a shared project env |
+| **Disk** | ~3 GB | CPU build of torch + embedding model + dependencies |
+| **Network** | Model download on first run | The default embedder `paraphrase-multilingual-MiniLM-L12-v2` is ~470 MB and comes from HuggingFace. Behind a slow/blocked connection set `HF_ENDPOINT=https://hf-mirror.com` or the first run hangs |
+| **Claude Code** | with skills enabled | |
+| **Obsidian** | optional | Only for graph visualization |
+
+> One source of truth for dependencies: **`requirements.txt`** at the repo root — what is installed and why is explained there.
 
 ### Installation
-
-> ⚠️ **Strongly recommended**: install inside a dedicated Conda environment to avoid conflicts with other Python projects on your machine.
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/huyang51/deep_read_paper_skill.git
 cd deep_read_paper_skill
 
-# 2. Create and activate a Conda environment (do this ONCE per machine)
+# 2. Create and activate the skill's own Conda environment (ONCE per machine)
 conda create -n paper-kb python=3.10 -y
 conda activate paper-kb
 
-# 3. Install the skill (pulls in all dependencies in one go)
-pip install -e .
+# 3. Install dependencies into the ACTIVATED env
+#    PYTHONNOUSERSITE=1 is not optional: pip treats packages already present in
+#    the user site as satisfied and skips them, leaving an env that breaks with
+#    ModuleNotFoundError the moment user site is disabled.
+#    (Windows PowerShell:  $env:PYTHONNOUSERSITE=1; python -m pip install -r requirements.txt)
+PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt
+#    (`pip install -e .` is equivalent — it reads requirements.txt too)
 
 # 4. Create + edit ONE file: settings.json
 cp settings.example.json settings.json
 # Fill in vault_dir, project_dir, python_cmd (3 required fields)
 # - vault_dir:   where to store reports and memory entries
 # - project_dir: your Claude Code project root
-# - python_cmd:  ABSOLUTE path to the conda env's python, e.g.
+# - python_cmd:  ABSOLUTE path to the env from step 2, e.g.
 #                - Linux/Mac:  "$(conda info --base)/envs/paper-kb/bin/python"
 #                - Windows:    "%USERPROFILE%\anaconda3\envs\paper-kb\python.exe"
 #                Run `which python` (Linux/Mac) or `where python` (Windows)
 #                inside the activated env to confirm the path.
 
-# 5. Deploy to your project (still inside the conda env)
-paper-kb-deploy            # or: python deploy.py
+# 5. Deploy to your project (still inside the env)
+python deploy.py           # or: paper-kb-deploy
+# This probes python_cmd and prints [WARN] if the interpreter cannot start the
+# server — that warning means the config it just wrote would be dead. Don't skip it.
 
 # 6. (Optional) Initialize Obsidian vault
 cp -r vault-template/ /your/knowledge-base/path/
@@ -138,15 +149,20 @@ cp -r vault-template/ /your/knowledge-base/path/
 # 7. Restart Claude Code
 ```
 
+> **🔑 How the skill is run: everything goes through that one environment**
+> - **Tool commands you type in a session** (`python tools/migrate_relations.py`, `python tools/verify_graph_arrows.py`, `python tools/index_paper.py`, …) hit whichever `python` is on PATH — so **`conda activate paper-kb` first**, otherwise they land on system Python and die with `ModuleNotFoundError`.
+> - **The MCP server and both hooks need no activation**: `deploy.py` bakes the absolute `python_cmd` path into `.mcp.json` / `.claude/settings.json`.
+> - **The first semantic search downloads the embedding model** (~470 MB, see the table). That one call is slow; later runs hit the local cache.
+
 > **💡 Why a Conda environment**:
-> - Isolates `chromadb` / `pydantic` / `PyMuPDF` from your system Python and other projects
+> - Isolates `chromadb` / `torch` / `sentence-transformers` / `PyMuPDF` from your system Python and other projects
 > - Upgrading or uninstalling the skill never affects anything else
-> - Reproducible across machines: `pip freeze > requirements.txt` then `pip install -r requirements.txt`
+> - Reproducible across machines: one `pip install -r requirements.txt`
 
 > **Common pitfalls**:
-> - Forgot to `conda activate paper-kb` → `pip install` lands in system Python, hooks fail with `ModuleNotFoundError`
-> - `python_cmd` in `settings.json` points to system Python instead of the conda env's python → same failure
-> - Fix: inside the activated env, run `which python` (Linux/Mac) or `where python` (Windows) and copy the absolute path into `python_cmd`
+> - Forgot `conda activate paper-kb` → `pip install` lands in another Python, or tool commands hit system Python and fail with `ModuleNotFoundError`
+> - `python_cmd` points to system Python instead of the skill's env → MCP server and hooks die at startup (deploy's preflight prints `[WARN]`)
+> - No `HF_ENDPOINT` set → the model download stalls and a starting MCP server looks dead
 
 ### Configuration (`settings.json`)
 
