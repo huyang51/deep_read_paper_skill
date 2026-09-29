@@ -694,9 +694,12 @@ python tools/verify_graph_arrows.py
 python tools/migrate_relations.py            # 扫描并打印迁移计划（安全，不写盘）
 python tools/migrate_relations.py --apply    # 写入 relations + 互指条目 + 图谱边
 python tools/migrate_relations.py --check    # 只做关系完整性校验
+python tools/migrate_relations.py --set-type 1=complementary --apply   # 类别推断不对时纠正
 ```
 
 迁移口径：`related_papers` 行按年份推断方向，计划里标注"（按年份推断）"；`## 后续引用` 里的链接方向**本来就已被约定写明**（链接意味着"对方在我之后"），因此恢复为 `direction: successor` 而不猜；`related_papers` 里指向未入库论文的 ID 报为幽灵节点，**不静默丢弃**。exit code：0 干净 / 2 有待迁移项或提示 / 1 有错误。
+
+**权威顺序**：已声明的 `relations` > `## 后续引用` 链接 > 年份推断。`related_papers` 只是投影（只有 ID，没有类别），所以**已声明的类别不会被重新推断覆盖**——重跑迁移不会把 `complementary` 改回 `method_similar`，声明为 `peer` 的关系也不会被遗留的链接重新拉出一条箭头。推断出的类别是猜的（`method_category` + `problem_domain` 相等即判方法相似），若正文写的是互补/发展，用 `--set-type <对方论文ID>=<类别>` 在**计划阶段**钉住：它同时钉住指向该论文的行和该论文自己声明的行，两侧不会各写一个类别（同一对给两个类别会被拒绝，exit 1）。计划末尾会逐行标注来源（沿用已声明值 / 方向由链接恢复 / 按年份推断），apply 前照此核对。
 
 ### 4.6 Obsidian 图谱视图
 

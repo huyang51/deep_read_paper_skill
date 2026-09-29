@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from mcp_server import relations as R  # noqa: E402
+import migrate_relations as M  # noqa: E402
 import verify_graph_arrows as V  # noqa: E402
 
 
@@ -213,8 +214,13 @@ class ArrowCheckTest(unittest.TestCase):
         self.assertFalse([i for i in issues if "❌" in i], issues)
 
 
-class VaultTest(unittest.TestCase):
-    """End-to-end writes against a temp vault directory."""
+class TempVaultCase(unittest.TestCase):
+    """Shared temp-vault fixture (no tests of its own).
+
+    Both the config module and the parser are patched: ``markdown_parser``
+    imports PAPERS_DIR by value, so patching only the config would leave the
+    writes pointing at the real vault.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -249,6 +255,10 @@ class VaultTest(unittest.TestCase):
 
     def _read(self, pid):
         return self.mp.get_paper_by_id(pid, self.papers)
+
+
+class VaultTest(TempVaultCase):
+    """End-to-end writes against a temp vault directory."""
 
     def test_declaring_relations_writes_reciprocal_and_projection(self):
         self._make(1, "Old", 2020)
@@ -351,6 +361,131 @@ class VaultTest(unittest.TestCase):
             {"target": 42, "type": "method_similar", "direction": "peer", "note": "n"}])
         result = self.mp.sync_paper_relations(self._read(1), self.papers)
         self.assertEqual(result["missing"], [42])
+
+    def test_new_papers_are_written_lf(self):
+        """Byte output must not depend on os.linesep: text-mode writes used to
+        translate every "\\n" to CRLF on Windows, so the same paper came out
+        different depending on who created it."""
+        path = self._make(1, "Solo", 2024)
+        self.assertNotIn(b"\r", path.read_bytes())
+
+    def test_rewrite_keeps_the_files_newline_convention(self):
+        """Regression from a real vault migration: mirroring a relation onto an
+        LF paper reported a whole-file diff, because the rewrite re-line-ended
+        every line as CRLF. A two-line frontmatter change must stay two lines."""
+        self._make(1, "Old", 2020)
+        self._make(2, "New", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "本文扩展了它"}])
+        path = self.papers / "Old.md"
+        crlf = path.read_text(encoding="utf-8").replace("\n", "\r\n").encode("utf-8")
+        path.write_bytes(crlf)
+        self.mp.invalidate_papers_cache()
+
+        self.mp.sync_paper_relations(self._read(2), self.papers)
+
+        raw = path.read_bytes()
+        self.assertIn(b"relations:", raw)                       # it was rewritten
+        self.assertEqual(raw.count(b"\n"), raw.count(b"\r\n"))  # ...and stayed CRLF
+
+
+class MigrateCliTest(TempVaultCase):
+    """The migration CLI: inference, overrides and the writes they produce."""
+
+    def test_set_type_overrides_the_inferred_class_on_both_sides(self):
+        """Regression for a real vault: two papers share a method category, so
+        the inference says method_similar, while both bodies call the pair
+        complementary. The override must land before the reciprocal is derived,
+        or the two sides disagree on the type."""
+        # Bodies name each other, exactly as the real pair does: a relation with
+        # neither a note nor prose to back it is a warning (exit 2), which is a
+        # separate rule and would otherwise mask what this test is about.
+        self._make(1, "Old", 2023, body="与 **New** 方向互补。", related=[2])
+        self._make(2, "New", 2025, body="与 **Old** 方向互补。")
+
+        rc = M.main(["--set-type", "2=complementary", "--apply"])
+
+        self.assertEqual(rc, 0)
+        fwd = R.relations_of(self._read(1))[0]
+        back = R.relations_of(self._read(2))[0]
+        self.assertEqual((fwd["target"], fwd["type"], fwd["direction"]),
+                         (2, "complementary", "successor"))
+        self.assertEqual((back["target"], back["type"], back["direction"]),
+                         (1, "complementary", "predecessor"))
+
+    def test_without_the_override_the_inferred_type_is_written(self):
+        self._make(1, "Old", 2023, related=[2])
+        self._make(2, "New", 2025)
+        M.main(["--apply"])
+        self.assertEqual(R.relations_of(self._read(1))[0]["type"], "method_similar")
+
+    def test_declared_type_survives_a_plain_rerun(self):
+        """Regression, caught on a real vault: the plan re-derived from
+        ``related_papers`` — a projection that carries ids and nothing else — so
+        a declared type the inference disagreed with was replaced on the very
+        next run. A --set-type correction lasted exactly one migration."""
+        self._make(1, "Old", 2023, body="与 **New** 互补。", related=[2])
+        self._make(2, "New", 2025, body="与 **Old** 互补。")
+        M.main(["--set-type", "2=complementary", "--apply"])
+
+        self.assertEqual(M.main(["--apply"]), 0)     # plain re-run: nothing to do
+        self.assertEqual(R.relations_of(self._read(1))[0]["type"], "complementary")
+        self.assertEqual(R.relations_of(self._read(2))[0]["type"], "complementary")
+
+    def test_override_repins_both_sides_on_an_already_declared_pair(self):
+        """Regression, on the real vault: re-running --set-type over a pair that
+        already declares the inferred class pinned only the row pointing at the
+        target. The reciprocal sync then reached the other paper last and wrote
+        the stale class back, so the correction silently undid itself."""
+        # Ids mirror the real vault (UniIR=2 declares, ReT=1 is pointed at).
+        self._make(1, "ReT", 2025, body="与 **UniIR** 互补。",
+                   relations=[{"target": 2, "type": "method_similar",
+                               "direction": "predecessor", "note": ""}])
+        self._make(2, "UniIR", 2023, body="与 **ReT** 互补。",
+                   relations=[{"target": 1, "type": "method_similar",
+                               "direction": "successor", "note": ""}])
+
+        self.assertEqual(M.main(["--set-type", "1=complementary", "--apply"]), 0)
+
+        self.assertEqual(R.relations_of(self._read(1))[0]["type"], "complementary")
+        self.assertEqual(R.relations_of(self._read(2))[0]["type"], "complementary")
+
+    def test_two_classes_for_one_pair_are_refused(self):
+        """Pinning both endpoints differently would write the pair with two
+        classes — the disagreement the migration exists to remove."""
+        self._make(1, "Old", 2023, body="与 **New** 互补。", related=[2])
+        self._make(2, "New", 2025, body="与 **Old** 互补。")
+
+        rc = M.main(["--set-type", "1=complementary", "--set-type", "2=evolutionary",
+                     "--apply"])
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(R.relations_of(self._read(1)), [])   # nothing written
+
+    def test_declaration_beats_a_stale_followup_link(self):
+        """The link convention says "the target came after me"; a declaration
+        that denies it (``peer``) must not be re-flipped into an arrow by a
+        migration run over a body nobody cleaned up."""
+        self._make(1, "Old", 2023, body="尾注\n\n## 后续引用\n\n- [[New]]",
+                   relations=[{"target": 2, "type": "complementary",
+                               "direction": "peer", "note": "同期并行"}])
+        self._make(2, "New", 2025, body="与 **Old** 互补。")
+
+        M.main(["--apply"])
+
+        self.assertEqual(R.relations_of(self._read(1))[0]["direction"], "peer")
+        # ...and no graph edge was invented for the peer pair.
+        self.assertNotIn("[[", self._read(1)["body"])
+
+    def test_malformed_override_is_a_bad_args_exit(self):
+        self._make(1, "Old", 2023)
+        self.assertEqual(M.parse_type_overrides(["1=complementary"]), {1: "complementary"})
+        for bad in ("complementary", "1=", "=complementary", "1=similar", "x=peer"):
+            with self.assertRaises(ValueError, msg=bad):
+                M.parse_type_overrides([bad])
+            # Exit 1 = bad args, and it must happen before anything is written.
+            self.assertEqual(M.main(["--set-type", bad, "--apply"]), 1)
+        self.assertEqual(R.relations_of(self._read(1)), [])
 
 
 if __name__ == "__main__":

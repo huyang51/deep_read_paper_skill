@@ -150,6 +150,7 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     # below, because this whitelist is a full rewrite and anything the caller
     # omits (relations, read_mode) must be carried over deliberately.
     prev = get_paper_by_id(paper_id, papers_dir) if paper_id is not None else None
+    kept_newline = None
     if paper_id is None:
         paper_id = get_next_id(papers_dir)
         paper_data["id"] = paper_id
@@ -158,6 +159,9 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
         if prev and prev.get("file"):
             existing_path = papers_dir.parent / prev["file"]
             if existing_path.exists():
+                # Read the convention BEFORE deleting: an idempotent re-index of
+                # an LF paper must not come back as a whole-file CRLF rewrite.
+                kept_newline = _detect_newline(existing_path)
                 # Delete old file first to avoid duplicate ID files
                 existing_path.unlink()
 
@@ -227,7 +231,8 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     file_content = frontmatter.dumps(post)
 
     # frontmatter.dumps may add extra blank lines at the end; normalize
-    with open(filepath, "w", encoding="utf-8") as f:
+    newline = kept_newline or _detect_newline(filepath)
+    with open(filepath, "w", encoding="utf-8", newline=newline) as f:
         f.write(file_content.rstrip() + "\n")
 
     invalidate_papers_cache()
@@ -242,10 +247,28 @@ def _paper_path(paper: dict, papers_dir: Path) -> Optional[Path]:
     return filepath if filepath.exists() else None
 
 
+def _detect_newline(path: Path) -> str:
+    """Return the newline convention of an existing file ("\\r\\n" or "\\n").
+
+    Rewriting a paper must not re-line-end it. ``open(path, "w")`` in text mode
+    translates every "\\n" to os.linesep, so on Windows a relation synced onto
+    an LF paper (or a migration adding two frontmatter keys) rewrites all of its
+    lines as CRLF — a whole-file diff for a two-line change. Detection is
+    best-effort: a new or unreadable file writes LF, which is what the vault
+    already tolerates and what keeps output platform-independent.
+    """
+    try:
+        head = path.open("rb").read(4096)
+    except OSError:
+        return "\n"
+    return "\r\n" if b"\r\n" in head else "\n"
+
+
 def _write_paper(path: Path, metadata: dict, body: str) -> None:
     post = frontmatter.Post(body, **metadata)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(frontmatter.dumps(post).rstrip() + "\n")
+    text = frontmatter.dumps(post).rstrip() + "\n"
+    with open(path, "w", encoding="utf-8", newline=_detect_newline(path)) as f:
+        f.write(text)
 
 
 def _split_followup(body: str) -> tuple[str, list[str], str]:
@@ -393,8 +416,14 @@ def sync_graph_edges(paper: dict, papers_dir: Path = None) -> dict:
                 wanted.setdefault(e["target"], set()).add(self_short)  # other is earlier
 
     # ── apply ────────────────────────────────────────────────────────────
+    # Visit every paper that declares something, not only the ones that want an
+    # edge: a stale link to a pair declared `peer` wants no edge anywhere, so
+    # under the narrower rule nobody would ever look at it and the declaration
+    # would keep losing to a link nobody cleaned up.
+    owners = [pid for pid, p in index.items() if relations_of(p)]
     moved, updated = [], []
-    for pid, want in wanted.items():
+    for pid in dict.fromkeys(owners + list(wanted)):
+        want = wanted.get(pid, set())
         p = index.get(pid)
         if p is None:
             continue
