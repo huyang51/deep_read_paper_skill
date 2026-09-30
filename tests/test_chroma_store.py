@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -120,6 +121,39 @@ class InitCollectionTest(unittest.TestCase):
         self.assertIn("嵌入模型", message)
         self.assertIn(str(cs.CHROMA_DIR), message)  # what to delete
         self.assertIn("重建", message)              # what happens next
+
+
+class EmptyVaultTest(unittest.TestCase):
+    """An emptied vault must still empty the index.
+
+    index_all_papers used to early-return on zero papers, leaving every
+    existing entry in place — search kept answering for papers whose notes
+    were all gone (the watcher hits exactly this path on a file deletion).
+    """
+
+    def setUp(self):
+        try:
+            self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        except TypeError:  # Python 3.9
+            self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / ".chromadb"
+
+    def tearDown(self):
+        try:
+            self.tmp.cleanup()
+        except OSError:
+            self.tmp._finalizer.detach()  # noqa: SLF001
+
+    def test_emptied_vault_empties_the_index(self):
+        store = make_store(self.path, EMBEDDER_A)
+        store.init_collection()
+        store.collection.upsert(ids=["9"], documents=["ghost"],
+                                metadatas=[{"id": "9"}])
+
+        with mock.patch.object(cs, "get_all_papers", return_value=[]):
+            store.index_all_papers()
+
+        self.assertEqual(store.collection.count(), 0)
 
 
 if __name__ == "__main__":

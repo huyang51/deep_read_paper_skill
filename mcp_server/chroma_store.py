@@ -106,6 +106,13 @@ class ChromaStore:
 
         papers = get_all_papers()
         if not papers:
+            # An emptied vault still owes an emptied index: a bare return here
+            # left every existing entry in place, so search kept answering for
+            # papers whose notes were all gone. The orphan sweep below runs on
+            # the empty `ids` list — which is exactly the right deletion set.
+            existing = self.collection.get()
+            if existing["ids"]:
+                self.collection.delete(ids=list(existing["ids"]))
             return
 
         ids = []
