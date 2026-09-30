@@ -61,21 +61,28 @@ async def _no_watcher():
     await asyncio.Event().wait()
 
 
-def drive(messages):
-    """Run the real main() loop over `messages`; return the replies it wrote."""
-    stdin = io.StringIO("".join(json.dumps(m) + "\n" for m in messages))
+def drive_raw(text, store=_StubStore):
+    """Run the real main() loop over raw stdin `text`; return the replies."""
+    stdin = io.StringIO(text)
     stdout = _CaptureStdout()
 
-    original = (server.get_store, server.watch_vault, sys.stdin, sys.stdout)
-    server.get_store = _StubStore
+    original = (server.get_store, server.watch_vault, sys.stdin, sys.stdout,
+                server.STARTUP_ERROR)
+    server.get_store = store
     server.watch_vault = _no_watcher
     sys.stdin, sys.stdout = stdin, stdout
     try:
         asyncio.run(server.main())
     finally:
-        server.get_store, server.watch_vault, sys.stdin, sys.stdout = original
+        (server.get_store, server.watch_vault, sys.stdin, sys.stdout,
+         server.STARTUP_ERROR) = original
 
     return stdout.messages()
+
+
+def drive(messages):
+    """Run the real main() loop over `messages`; return the replies it wrote."""
+    return drive_raw("".join(json.dumps(m) + "\n" for m in messages))
 
 
 def conversation(*messages):
@@ -126,6 +133,87 @@ class NotificationTest(unittest.TestCase):
 
         self.assertEqual([r.get("id") for r in replies], [1, 2])
         self.assertEqual(len(replies[1]["result"]["tools"]), len(server.TOOLS))
+
+
+    def test_handshake_survives_a_malformed_line(self):
+        """Junk on stdin costs one log line, not the session.
+
+        The dispatcher's try/except never saw these: json.loads returns a list
+        for a batch, a str for `"hi"`, an int for `42` — and `msg.get()` raised
+        AttributeError in the loop itself, outside every handler, ending the
+        process without a reply and dropping the client's connection.
+        """
+        replies = drive_raw(
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}) + "\n"
+            + "[{\"jsonrpc\":\"2.0\"}]\n"          # a batch, per the spec
+            + '"hi"\n'
+            + "42\n"
+            + "{\n"                                 # truncated JSON
+            + json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}) + "\n"
+        )
+
+        self.assertEqual([r.get("id") for r in replies], [1, 2])
+        self.assertIn("tools", replies[1]["result"])
+
+    def test_non_object_params_do_not_kill_the_loop(self):
+        replies = drive(conversation(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": [1, 2]},
+        ))
+
+        self.assertEqual([r.get("id") for r in replies], [1, 2])
+        self.assertEqual(replies[1]["error"]["code"], -32601)  # empty name
+
+
+class _BrokenStore:
+    """A store that cannot be opened — the disk-full / bad-path case."""
+
+    def init_collection(self):
+        raise RuntimeError("unable to open database file")
+
+
+class StartupFailureTest(unittest.TestCase):
+    """A broken install must reach the user through the tools.
+
+    The index and the vault directories are prepared before `initialize` is
+    answered. Anything that raised there ended the process before it said a
+    word: the client reports "Failed to connect", zero tools exist, and the
+    reason sits in a stderr log nobody reads.
+    """
+
+    CALL = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "paper_search", "arguments": {"query": "x"}}}
+
+    def patch_config_error(self, message):
+        from mcp_server import config
+        original = config.CONFIG_ERROR
+        config.CONFIG_ERROR = message
+        self.addCleanup(setattr, config, "CONFIG_ERROR", original)
+
+    def test_broken_settings_json_reaches_the_caller(self):
+        """main() seeds STARTUP_ERROR from config.CONFIG_ERROR, so a settings
+        file that could not be parsed is reported by the tools instead of
+        silently pointing the vault somewhere else."""
+        self.patch_config_error("settings.json 读取失败: ValueError: boom")
+
+        replies = drive(conversation(self.CALL))
+
+        self.assertEqual([r.get("id") for r in replies], [1, 2])
+        # The handshake is unaffected — that is how the message gets out at all.
+        self.assertNotIn("error", replies[0])
+        self.assertEqual(replies[1]["error"]["code"], -32000)
+        self.assertIn("boom", replies[1]["error"]["message"])
+
+    def test_unopenable_index_reaches_the_caller(self):
+        replies = drive_raw(
+            "".join(json.dumps(m) + "\n"
+                    for m in conversation(self.CALL)),
+            store=_BrokenStore,
+        )
+
+        self.assertEqual(replies[1]["error"]["code"], -32000)
+        self.assertIn("向量索引初始化失败", replies[1]["error"]["message"])
+        self.assertIn("unable to open database file",
+                      replies[1]["error"]["message"])
 
 
 class DispatcherTest(unittest.TestCase):

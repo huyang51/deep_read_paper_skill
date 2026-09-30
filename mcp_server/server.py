@@ -7,6 +7,7 @@ from pathlib import Path
 
 from watchfiles import awatch, Change
 
+from mcp_server import config
 from mcp_server.config import PAPERS_DIR
 from mcp_server.models import (
     SearchInput, GetPaperInput, FindRelatedInput, SearchByMethodInput,
@@ -15,8 +16,8 @@ from mcp_server.models import (
 )
 from mcp_server import cite_api
 from mcp_server.markdown_parser import (
-    get_paper_by_id, get_all_papers, extract_wikilinks,
-    create_paper_file, delete_paper_file, parse_paper,
+    coerce_id, get_paper_by_id, get_all_papers, extract_wikilinks,
+    cleanup_after_deletion, create_paper_file, delete_paper_file, parse_paper,
     invalidate_papers_cache, sync_paper_relations,
 )
 from mcp_server.chroma_store import ChromaStore
@@ -25,6 +26,11 @@ from mcp_server.relations import describe, relation_index, validate_relations, r
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("paper_kb_mcp")
+
+# Why the knowledge base is unusable, if it is. Set at startup (bad
+# settings.json, an uncreatable vault_dir, an index that will not open) and
+# reported through tools/call — see main(). Empty means everything is fine.
+STARTUP_ERROR = None
 
 # Lazy-initialized on first use to avoid side effects at import time
 # (e.g., when running tests or when ChromaDB init would fail).
@@ -302,13 +308,22 @@ async def handle_search_by_method(params: dict) -> str:
         return json.dumps({"error": f"Invalid parameters: {e}"})
 
     all_papers = get_all_papers()
-    method_lower = input_data.method_category.lower()
+    method_lower = input_data.method_category.lower().strip()
     matches = []
     for paper in all_papers:
+        # An empty filter matched everything: `"" in ""` is True, so every paper
+        # with no method_category qualified. An empty query is not a query.
+        if not method_lower:
+            break
         paper_method = paper.get("method_category", "").lower()
         if method_lower in paper_method or any(method_lower in kw.lower() for kw in paper.get("keywords", [])):
+            pid = coerce_id(paper.get("id"))
+            if pid is None:
+                # Same trap as paper_find_related: papers/ can hold a .md with no
+                # id, and paper["id"] would raise KeyError for the whole query.
+                continue
             matches.append({
-                "paper_id": paper["id"],
+                "paper_id": pid,
                 "title": paper.get("title", ""),
                 "year": paper.get("year", ""),
                 "venue": paper.get("venue", ""),
@@ -396,15 +411,37 @@ async def handle_paper_remove(params: dict) -> str:
         return json.dumps({"error": f"论文 ID={input_data.paper_id} 未找到"})
 
     title = paper.get("title", "Unknown")
-    # Delete file first, then index — if file deletion fails, index remains consistent
-    file_deleted = delete_paper_file(input_data.paper_id)
-    get_store().delete_paper(str(input_data.paper_id))
+    short_name = paper.get("short_name", "")
+    # File first: if it cannot be deleted the index is left alone, so the two
+    # never disagree about whether the paper exists.
+    if not delete_paper_file(input_data.paper_id):
+        return json.dumps({
+            "error": f"论文 ID={input_data.paper_id} 的文件删除失败，索引未改动"
+        }, ensure_ascii=False)
 
-    return json.dumps({
+    # Then the references it left behind — other papers keep `relations` entries
+    # naming its id and `## 后续引用` links naming its short_name, which would
+    # otherwise become unknown_target errors and Obsidian ghost nodes.
+    rewritten = cleanup_after_deletion(input_data.paper_id, short_name)
+    # A dead vector index must not fail a deletion that already happened on disk.
+    warnings = []
+    try:
+        store = get_store()
+        store.delete_paper(str(input_data.paper_id))
+        if rewritten:
+            store.index_all_papers()
+    except Exception as e:
+        warnings.append(f"向量索引未同步（论文文件与关系已正常删除）：{e}")
+
+    payload = {
         "status": "ok",
         "paper_id": input_data.paper_id,
-        "message": f"论文已删除: {title}"
-    }, ensure_ascii=False, indent=2)
+        "message": f"论文已删除: {title}",
+        "references_cleaned": rewritten,
+    }
+    if warnings:
+        payload["warning"] = " ".join(warnings)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 async def handle_index_stats(params: dict = None) -> str:
@@ -479,6 +516,15 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
             "result": {"tools": TOOLS}
         }
     elif method == "tools/call":
+        if STARTUP_ERROR:
+            # Answered as a tool error rather than a JSON-RPC one: this is a
+            # broken installation, not a bad request, and the text is the whole
+            # point — it is the only place the user will see why nothing works.
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32000, "message": f"知识库不可用：{STARTUP_ERROR}"}
+            }
         tool_name = params.get("name", "")
         tool_args = params.get("arguments", {})
         handler = TOOL_DISPATCH.get(tool_name)
@@ -566,6 +612,19 @@ async def watch_vault():
 
 # ─── main ───────────────────────────────────────────────────────────────────
 
+def ensure_vault_dirs():
+    """Create the vault's standard subdirectories.
+
+    papers/ is created on demand by create_paper_file, .chromadb/ by ChromaDB and
+    attachments/ by extract_figures.py — but nothing created reports/ or
+    insights/, even though README, SKILL.md and the report workflow all treat
+    them as part of the layout. Creating them here makes the documented tree
+    real on first start.
+    """
+    for directory in (config.PAPERS_DIR, config.REPORTS_DIR, config.INSIGHTS_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
+
+
 async def read_stdin(loop):
     """Read a line from stdin using a thread executor.
     Note: On Windows, sharing stdin between main thread and executor thread can
@@ -584,10 +643,23 @@ async def main():
 
     logger.info("Starting paper_kb_mcp server...")
 
-    # Initialize index
-    get_store().init_collection()
-    get_store().index_all_papers()
-    logger.info(f"Indexed {get_store().collection.count()} papers.")
+    # Initialize the index — never at the cost of the handshake. This runs before
+    # `initialize` is answered, so anything that raises here (a vault_dir that
+    # cannot be created, an index that cannot be opened, a bad settings.json)
+    # used to end the process before it said a word: the client reports "Failed
+    # to connect", zero tools exist, and the reason sits in a stderr log nobody
+    # reads. Recording it instead lets the tools register and hand the user the
+    # actual problem when they call one.
+    global STARTUP_ERROR
+    STARTUP_ERROR = config.CONFIG_ERROR
+    try:
+        ensure_vault_dirs()
+        get_store().init_collection()
+        get_store().index_all_papers()
+        logger.info(f"Indexed {get_store().collection.count()} papers.")
+    except Exception as e:
+        STARTUP_ERROR = STARTUP_ERROR or f"向量索引初始化失败：{type(e).__name__}: {e}"
+        logger.error(f"{STARTUP_ERROR} —— 服务照常启动，工具会返回这条错误。")
 
     # Start file watcher in background
     watcher_task = asyncio.create_task(watch_vault())
@@ -615,9 +687,25 @@ async def main():
                 logger.error(f"Invalid JSON: {e}")
                 continue
 
+            # JSON-RPC also defines batch requests (a top-level array). Nothing
+            # checked the shape, so a batch — or any non-object line — reached
+            # msg.get() and raised AttributeError *here*, outside the handler's
+            # try/except, ending the process with no reply at all. An
+            # unanswerable message should cost one log line, not the session.
+            if not isinstance(msg, dict):
+                logger.error(f"Ignoring non-object JSON-RPC message: {line[:200]}")
+                continue
+
             method = msg.get("method", "")
             request_id = msg.get("id")
             params = msg.get("params", {})
+            if not isinstance(params, dict):
+                # A non-object `params` reached params.get() in the dispatcher
+                # and killed the loop the same way. The handlers validate their
+                # own arguments, so an empty dict gets the caller a normal
+                # parameter error instead.
+                logger.error(f"Ignoring non-object params for {method}: {params!r}")
+                params = {}
 
             response = await handle_request(method, request_id, params)
             # A JSON-RPC notification has no id and must not be answered, no
