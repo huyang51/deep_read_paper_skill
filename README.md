@@ -110,6 +110,18 @@ graph TD
 
 ### Installation
 
+**One command (recommended)** — with any Python ≥3.9 and conda on PATH:
+
+```bash
+git clone https://github.com/huyang51/deep_read_paper_skill.git
+cd deep_read_paper_skill
+python bootstrap.py --vault D:/papers/knowledge-base --register
+```
+
+`bootstrap.py` checks the running interpreter, creates/uses the `paper-kb` conda env and installs `requirements.txt` into it when anything is missing, writes `settings.json` with that interpreter's absolute path (so `python_cmd` cannot point at the wrong Python), seeds the vault from `vault-template/` when the target does not exist, then hands off to `deploy.py` for the preflight and registration. An existing `settings.json` is kept unless `--force` (it is backed up first); the interpreter is asked interactively unless `--yes` takes the defaults. See `python bootstrap.py --help` for every flag.
+
+The step-by-step path below does exactly the same things by hand:
+
 ```bash
 # 1. Clone the repository
 git clone https://github.com/huyang51/deep_read_paper_skill.git

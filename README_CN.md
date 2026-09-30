@@ -110,6 +110,18 @@ graph TD
 
 ### 安装
 
+**一条命令（推荐）**——任意 Python ≥3.9 + PATH 里有 conda 即可：
+
+```bash
+git clone https://github.com/huyang51/deep_read_paper_skill.git
+cd deep_read_paper_skill
+python bootstrap.py --vault D:/papers/knowledge-base --register
+```
+
+`bootstrap.py` 会：检查当前解释器的依赖 → 缺了就自动创建/复用 `paper-kb` conda 环境并装好 `requirements.txt` → 用该解释器的**绝对路径**写 `settings.json`（`python_cmd` 不可能再指错 Python）→ 目标不存在时按 `vault-template/` 初始化知识库 → 最后交给 `deploy.py` 做启动自检与注册。已存在的 `settings.json` 默认保持原样（`--force` 才覆盖，先备份）；路径默认交互式询问，`--yes` 直接采用默认值。全部参数见 `python bootstrap.py --help`。
+
+下面的分步手动路径做的事与它完全相同：
+
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/huyang51/deep_read_paper_skill.git
