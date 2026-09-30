@@ -125,9 +125,12 @@ def interpreter_path(path) -> str:
 
     Forward slashes because a Windows path in JSON needs them — backslashes are
     escapes, and `"D:\\Anaconda3\\envs\\..."` is a parse error, which is the
-    single most common way a hand-written settings.json fails.
+    single most common way a hand-written settings.json fails. expanduser()
+    because no shell expands `~` inside an argument's *value* on either
+    platform: `--vault ~/papers/kb` would otherwise resolve against the cwd and
+    grow a literal `~` directory tree.
     """
-    return str(Path(path).resolve()).replace("\\", "/")
+    return str(Path(path).expanduser().resolve()).replace("\\", "/")
 
 
 def seed_vault(vault: Path) -> str:
@@ -282,8 +285,11 @@ def main(argv=None):
     vault_default = settings.get("vault_dir") or str(Path.cwd() / "knowledge-base")
     project_default = settings.get("project_dir") or str(Path.cwd())
     log()
-    vault = Path(prompt_path("知识库目录 (vault_dir)", vault_default, args.yes))
-    project = Path(prompt_path("项目根目录 (project_dir)", project_default, args.yes))
+    # expanduser() here, not just in interpreter_path(): seed_vault() tests this
+    # Path for existence before copying the template into it, and a literal `~/x`
+    # is never an existing directory — it is a `~` folder waiting to be created.
+    vault = Path(prompt_path("知识库目录 (vault_dir)", vault_default, args.yes)).expanduser()
+    project = Path(prompt_path("项目根目录 (project_dir)", project_default, args.yes)).expanduser()
 
     # An existing settings.json keeps every key it had (embedding_model, the
     # trigger keywords, openalex_mailto); a fresh one starts from the example.

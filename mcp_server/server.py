@@ -439,6 +439,15 @@ async def handle_paper_remove(params: dict) -> str:
         "message": f"论文已删除: {title}",
         "references_cleaned": rewritten,
     }
+    if "## 后续引用" in paper.get("body", ""):
+        # An edge the deleted paper *hosted* — written in its followup section
+        # on behalf of another paper's declaration — vanishes with the file,
+        # and the declarer's own frontmatter entry is stripped by the cleanup
+        # above, so no surviving data points at the loss. Saying so turns the
+        # one silent structural consequence of a deletion into a recoverable
+        # instruction.
+        payload["note"] = ("被删论文的「## 后续引用」若曾代写他人声明的图谱边，"
+                           "该边随文件一并消失；重新索引声明方论文即可重建。")
     if warnings:
         payload["warning"] = " ".join(warnings)
     return json.dumps(payload, ensure_ascii=False, indent=2)
@@ -604,9 +613,17 @@ async def watch_vault():
                 except Exception as e:
                     logger.error(f"  Failed to index {filepath.name}: {e}")
             elif change_type == Change.deleted:
-                # Can't get paper_id from deleted file, do full re-sync
+                # Can't get paper_id from deleted file, do full re-sync.
+                # Guarded like the add/modify branch above: an unhandled raise
+                # here would escape the async-for and kill the watcher task for
+                # the rest of the session — one transient error (a locked
+                # sqlite file, an antivirus scan) would silently end every
+                # future re-index.
                 logger.info(f"  Deleted: {filepath.name}, re-syncing index")
-                get_store().index_all_papers()
+                try:
+                    get_store().index_all_papers()
+                except Exception as e:
+                    logger.error(f"  Re-sync failed: {e}")
                 break
 
 
