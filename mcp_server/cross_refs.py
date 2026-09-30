@@ -1,6 +1,8 @@
 import re
 from typing import Optional
-from mcp_server.markdown_parser import get_paper_by_id, extract_wikilinks, build_relation_graph, get_all_papers
+from mcp_server.markdown_parser import (
+    coerce_id, get_paper_by_id, extract_wikilinks, build_relation_graph, get_all_papers,
+)
 from mcp_server.relations import derive_direction, infer_type, relation_index, relations_of
 
 # Minimum number of shared keywords (case-insensitive) to consider two papers related.
@@ -31,7 +33,14 @@ def find_related(paper_id: int, relation_type: Optional[str] = None) -> list[dic
     if not paper:
         return []
 
-    all_papers = {p["id"]: p for p in get_all_papers()}
+    # coerce_id + skip, not p["id"]: papers/ may hold a .md with no id (a
+    # hand-written note, or one whose id was quoted), and a bare KeyError here
+    # failed paper_find_related for every paper in the vault until it was fixed.
+    all_papers = {}
+    for candidate in get_all_papers():
+        candidate_id = coerce_id(candidate.get("id"))
+        if candidate_id is not None:
+            all_papers[candidate_id] = candidate
     index = relation_index(all_papers.values())
 
     declared = {e["target"]: e for e in relations_of(paper)}

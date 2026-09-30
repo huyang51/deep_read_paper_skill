@@ -10,7 +10,9 @@ class ResponseFormat(str, Enum):
 
 class SearchInput(BaseModel):
     query: str = Field(description="搜索查询文本（中英文均可）")
-    n_results: int = Field(default=5, description="返回结果数量")
+    # Bounded: chroma rejects n_results < 1 with its own error, and an unbounded
+    # upper end just asks for the whole vault.
+    n_results: int = Field(default=5, ge=1, le=50, description="返回结果数量")
     response_format: ResponseFormat = Field(default=ResponseFormat.markdown)
 
 
