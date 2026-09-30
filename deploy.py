@@ -35,6 +35,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from mcp_server import config
 from mcp_server.hf_offline import prefer_cached_model
 
 SKILL_DIR = Path(__file__).resolve().parent
@@ -42,6 +43,9 @@ OUTPUT_DIR = SKILL_DIR / "output"
 TEMPLATES_DIR = SKILL_DIR / "templates"
 SETTINGS_FILE = SKILL_DIR / "settings.json"
 SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
+
+# The placeholder vault_dir in settings.example.json, verbatim.
+SETTINGS_EXAMPLE_VAULT = "D:/my-papers/knowledge-base"
 
 # What the MCP server imports at startup. ChromaDB's built-in ONNX embedder
 # (all-MiniLM-L6-v2) needs none of torch, so sentence_transformers is only
@@ -111,6 +115,15 @@ def load_settings() -> dict:
         print("  Example: \"D:/Paper_read/knowledge-base\"")
         sys.exit(1)
 
+    # The example file ships literal placeholders. Left unedited, deploy would
+    # create D:/my-papers/.claude on Windows — or, on Linux where that string is
+    # a *relative* path, a directory literally named "D:" inside the cwd. Nobody
+    # wants either, and nothing else in the flow would have said a word.
+    if settings.get("vault_dir") == SETTINGS_EXAMPLE_VAULT:
+        print(f"[ERROR] settings.json 还是模板里的示例路径（{SETTINGS_EXAMPLE_VAULT}）。")
+        print("        请把 vault_dir / project_dir / python_cmd 改成你自己的路径后重跑。")
+        sys.exit(1)
+
     python_cmd = settings.get("python_cmd", "python")
     if shutil.which(python_cmd) is None:
         print(f"[WARN] python_cmd '{python_cmd}' is not on PATH;")
@@ -159,7 +172,13 @@ def generate_config(register: bool = False):
     print(f"  Python      : {python_cmd}")
     print(f"  Project dir : {project_dir or '(not set — manual deploy)'}")
 
-    model = settings.get("embedding_model", ONNX_EMBEDDER)
+    # The model the *server* will actually load, not a guess from this file.
+    # deploy.py used to fall back to the ONNX model when settings.json omitted
+    # embedding_model, while mcp_server/config.py falls back to the multilingual
+    # one — so the preflight probed the wrong model and printed [OK] on an
+    # interpreter with no torch, which then died at startup. This is the very
+    # failure the preflight exists to catch, so it reads the server's own value.
+    model = config.EMBEDDING_MODEL or ONNX_EMBEDDER
     report = probe_python(python_cmd, model)
     broken = {m: d for m, d in report.items() if d != "ok"}
     if broken:
@@ -225,12 +244,19 @@ def generate_config(register: bool = False):
     # it is registered at user scope instead. See register_mcp_server().
     if project_dir:
         project_path = Path(project_dir)
-        claude_dir = project_path / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-
-        shutil.copy(OUTPUT_DIR / ".claude-settings.json", claude_dir / "settings.json")
-        print(f"  [OK] Hooks deployed to {claude_dir / 'settings.json'}")
-        warn_if_shadowed(project_path, name)
+        if not project_path.is_dir():
+            # Not created on purpose. A typo'd or not-yet-existing project_dir
+            # would otherwise get a .claude/ tree planted under it, pointing at
+            # hooks for a project that does not exist.
+            print(f"  [注意] project_dir 不存在，跳过 hooks 部署：{project_path}")
+            print("         改对路径后重跑（MCP 注册与它无关，不受影响）。")
+        else:
+            claude_dir = project_path / ".claude"
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            ours = json.loads((OUTPUT_DIR / ".claude-settings.json")
+                              .read_text(encoding="utf-8"))
+            deploy_project_settings(claude_dir / "settings.json", ours)
+            warn_if_shadowed(project_path, name)
     else:
         print("  Next:")
         print(f"  cp output/.claude-settings.json <project>/.claude/settings.json")
@@ -248,6 +274,83 @@ def mcp_server_name() -> str:
         return next(iter(data["mcpServers"]))
     except (OSError, ValueError, KeyError, StopIteration):
         return "paper_kb_mcp"
+
+
+def _hook_scripts(entries) -> set:
+    """Hook script filenames referenced by one event's entries.
+
+    Identity is the script name, not the whole command line: the interpreter
+    path in front of it is a user's to change, and a re-run must recognize its
+    own hook through an edited command rather than installing a second copy.
+    """
+    found = set()
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        for hook in (entry.get("hooks") or []):
+            if isinstance(hook, dict):
+                found.update(re.findall(r"([\w.-]+\.py)", str(hook.get("command", ""))))
+    return found
+
+
+def merge_hook_config(existing: dict, ours: dict):
+    """Fold our hooks into a settings dict. Returns ``(merged, added_events)``.
+
+    Everything not named `hooks` is carried through untouched, and per event an
+    entry is only appended when its script is not already referenced — so a
+    second deploy is a no-op instead of a duplicate.
+    """
+    merged = dict(existing)
+    hooks = dict(merged.get("hooks") or {})
+    added = []
+    for event, entries in (ours.get("hooks") or {}).items():
+        current = list(hooks.get(event) or [])
+        present = _hook_scripts(current)
+        for entry in entries:
+            if _hook_scripts([entry]) & present:
+                continue
+            current.append(entry)
+            added.append(event)
+        hooks[event] = current
+    merged["hooks"] = hooks
+    return merged, added
+
+
+def deploy_project_settings(dest: Path, ours: dict):
+    """Install the hooks into a project's settings.json without destroying it.
+
+    The old code was a bare shutil.copy over the destination, which silently
+    replaced whatever the project already had — permissions, model, env, its own
+    hooks. Users are told to point project_dir at a real project root, and real
+    project roots already have this file, so the documented path ran straight
+    into the one irreversible mistake in the whole flow.
+    """
+    if not dest.exists():
+        dest.write_text(json.dumps(ours, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+        print(f"  [OK] Hooks deployed to {dest}")
+        return
+
+    try:
+        existing = json.loads(dest.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as e:
+        print(f"  [WARN] {dest} 已存在但无法解析（{type(e).__name__}: {e}），没有动它。")
+        print(f"         请手动把 output/.claude-settings.json 的 hooks 合并进去。")
+        return
+    if not isinstance(existing, dict):
+        print(f"  [WARN] {dest} 的顶层不是 JSON 对象，没有动它。")
+        return
+
+    merged, added = merge_hook_config(existing, ours)
+    if not added and merged == existing:
+        print(f"  [OK] Hooks 已在 {dest} 中，无需改动")
+        return
+
+    backup = dest.with_name(dest.name + ".bak")
+    shutil.copy(dest, backup)
+    dest.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+    print(f"  [OK] Hooks 已合并进 {dest}（原有配置保留，备份 {backup.name}）")
 
 
 def warn_if_shadowed(project_dir: Path, name: str):

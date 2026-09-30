@@ -192,5 +192,154 @@ class RegisterMcpServerTest(unittest.TestCase):
         self.assertIn("boom", out)
 
 
+class HookMergeTest(unittest.TestCase):
+    """Hooks are merged into a project's settings.json, never copied over it.
+
+    The failure this guards: `shutil.copy(output/.claude-settings.json, dest)`
+    on a real project root — which already has a settings.json holding the
+    user's permissions, model, env and hooks — replaced all of it, and the
+    documented install path is exactly where that happened.
+    """
+
+    OURS = {"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command",
+                    "command": "python D:/skill/hooks/user_prompt_submit.py"}]}]}}
+
+    def project(self, settings=None) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        if settings is not None:
+            (root / "settings.json").write_text(
+                json.dumps(settings), encoding="utf-8")
+        return root
+
+    def test_first_deploy_creates_the_file(self):
+        root = self.project()
+        deploy.deploy_project_settings(root / "settings.json", self.OURS)
+        written = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+        self.assertIn("UserPromptSubmit", written["hooks"])
+
+    def test_existing_settings_are_preserved(self):
+        theirs = {"permissions": {"allow": ["Bash(ls:*)"]}, "model": "opus",
+                  "hooks": {"Stop": [{"hooks": [{"type": "command",
+                                                 "command": "python mine.py"}]}]}}
+        root = self.project(theirs)
+
+        deploy.deploy_project_settings(root / "settings.json", self.OURS)
+
+        merged = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(merged["permissions"], theirs["permissions"])
+        self.assertEqual(merged["model"], "opus")
+        self.assertEqual(len(merged["hooks"]["Stop"]), 1)          # theirs, kept
+        self.assertEqual(len(merged["hooks"]["UserPromptSubmit"]), 1)  # ours
+        self.assertTrue((root / "settings.json.bak").exists())     # and a backup
+
+    def test_second_deploy_adds_nothing(self):
+        """Idempotent, and it must not stack a duplicate hook that then runs
+        the keyword injector twice on every prompt."""
+        root = self.project()
+        deploy.deploy_project_settings(root / "settings.json", self.OURS)
+        before = (root / "settings.json").read_text(encoding="utf-8")
+
+        out = capture(deploy.deploy_project_settings,
+                      root / "settings.json", self.OURS)
+
+        self.assertEqual((root / "settings.json").read_text(encoding="utf-8"), before)
+        self.assertIn("无需改动", out)
+
+    def test_our_hook_is_recognized_through_an_edited_interpreter(self):
+        """Identity is the script name: a user who repointed the interpreter at
+        their own python must not get a second copy of the same hook."""
+        theirs = {"hooks": {"UserPromptSubmit": [
+            {"hooks": [{"type": "command",
+                        "command": "D:/other/python.exe D:\\skill\\hooks\\user_prompt_submit.py"}]}]}}
+        root = self.project(theirs)
+
+        deploy.deploy_project_settings(root / "settings.json", self.OURS)
+
+        merged = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(merged["hooks"]["UserPromptSubmit"]), 1)
+
+    def test_unparseable_settings_are_left_alone(self):
+        """A file we cannot read is a file we must not overwrite."""
+        root = self.project()
+        broken = root / "settings.json"
+        broken.write_text('{"permissions": {"allow": [}},', encoding="utf-8")
+
+        out = capture(deploy.deploy_project_settings, broken, self.OURS)
+
+        self.assertEqual(broken.read_text(encoding="utf-8"),
+                         '{"permissions": {"allow": [}},')
+        self.assertIn("[WARN]", out)
+
+    def test_unrelated_keys_of_a_non_dict_file_survive(self):
+        root = self.project()
+        broken = root / "settings.json"
+        broken.write_text('["not", "an", "object"]', encoding="utf-8")
+
+        capture(deploy.deploy_project_settings, broken, self.OURS)
+
+        self.assertEqual(broken.read_text(encoding="utf-8"),
+                         '["not", "an", "object"]')
+
+
+class PlaceholderSettingsTest(unittest.TestCase):
+    """The shipped example must not be deployable as-is.
+
+    settings.example.json carries literal placeholder paths; left unedited on
+    Linux, "D:/my-papers/knowledge-base" is a *relative* path and deploy would
+    create a directory literally named "D:" in the cwd.
+    """
+
+    def run_load(self, settings):
+        """Drive load_settings over a temp settings.json.
+
+        Returns (output, result). load_settings reports fatal problems with
+        sys.exit, so SystemExit is captured into `result` — the tests below
+        assert on it directly rather than treating "did not raise" as success.
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "settings.json"
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        buf = io.StringIO()
+        result = None
+        try:
+            with contextlib.redirect_stdout(buf), \
+                 mock.patch.object(deploy, "SETTINGS_FILE", path):
+                result = deploy.load_settings()
+        except SystemExit as e:
+            result = e
+        return buf.getvalue(), result
+
+    def test_placeholder_vault_dir_is_refused(self):
+        out, result = self.run_load({"vault_dir": deploy.SETTINGS_EXAMPLE_VAULT,
+                                     "python_cmd": sys.executable})
+        self.assertIsInstance(result, SystemExit)
+        self.assertIn("[ERROR]", out)
+        self.assertIn("示例路径", out)
+
+    def test_a_real_vault_dir_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out, result = self.run_load({"vault_dir": tmp,
+                                         "python_cmd": sys.executable})
+        self.assertNotIn("[ERROR]", out)
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["vault_dir"], tmp)
+
+    def test_missing_file_mentions_the_example_to_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf), \
+                     mock.patch.object(deploy, "SETTINGS_FILE",
+                                       Path(tmp) / "settings.json"):
+                    deploy.load_settings()
+            except SystemExit:
+                pass
+        self.assertIn("settings.example.json", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
