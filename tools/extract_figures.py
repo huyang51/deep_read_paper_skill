@@ -323,7 +323,10 @@ def extract_figures(pdf_path, outdir, pages=None, dpi=300.0, pad=6.0,
     }
 
     def _save_entry(page, crop, name, kind, caption=""):
-        out_png = f"{stem}_{name}.png"
+        # --name/--prefix are interpolated into a path under --outdir, so a
+        # "../.." in one of them wrote outside the output directory. Local CLI,
+        # but there is no reason for the only unsanitized path component here.
+        out_png = f"{stem}_{re.sub(r'[^0-9A-Za-z_.-]', '_', str(name)) or 'fig'}.png"
         w_px, h_px = render_crop(page, crop, outdir / out_png, dpi, max_px)
         manifest["figures"].append({
             "name": name,

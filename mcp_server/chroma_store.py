@@ -1,10 +1,31 @@
 import logging
+import re
 import chromadb
 from chromadb.utils import embedding_functions
 from pathlib import Path
 from mcp_server.config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_MODEL
 from mcp_server.hf_offline import prefer_cached_model
-from mcp_server.markdown_parser import get_all_papers, parse_paper
+from mcp_server.markdown_parser import coerce_id, get_all_papers, parse_paper
+
+
+def _as_year(value):
+    """A plausible 4-digit publication year, or None.
+
+    Frontmatter is hand-editable, so this field arrives as 2023, "2023",
+    "2023a", "2023-06", "preprint", or a YAML list depending on the author.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        # Trailing `(?!\d)`, not `\b`: "2023a" is how a preprint revision gets
+        # written, and there is no word boundary between "3" and "a" — the
+        # boundary form silently returned None for exactly the case that
+        # motivated the coercion.
+        match = re.search(r"\b(1[89]\d{2}|20\d{2})(?!\d)", value)
+        return int(match.group(1)) if match else None
+    return None
 
 
 class ChromaStore:
@@ -91,14 +112,32 @@ class ChromaStore:
         metadatas = []
         documents = []
 
+        seen_ids = set()
+        skipped = []
         for paper in papers:
-            paper_id = str(paper.get("id", ""))
+            # Ids are the index's primary key, and chromadb rejects the entire
+            # upsert if two of them collide. Ids come from hand-editable
+            # frontmatter, so `id:` missing (or a duplicate) is a realistic
+            # state — and both used to collapse to "" and raise
+            # "Expected IDs to be unique". That matters more than it looks:
+            # this runs before the handshake and again from the watcher on every
+            # vault change, so one stray .md meant the server never answered
+            # initialize (no tools registered at all) or the watcher died
+            # silently for the rest of the session. Skipping the file is
+            # recoverable and says so; refusing to start is not.
+            paper_id = coerce_id(paper.get("id"))
+            if paper_id is None or paper_id in seen_ids:
+                skipped.append(f"{paper.get('file') or '?'}"
+                               + ("" if paper_id is None else f" (id {paper_id} 重复)"))
+                continue
+            seen_ids.add(paper_id)
+            paper_id = str(paper_id)
             emb_text = self._make_embedding_text(paper)
 
             ids.append(paper_id)
             documents.append(emb_text)
             metadatas.append({
-                "id": str(paper.get("id", "")),
+                "id": paper_id,
                 "title": str(paper.get("title", "")),
                 "short_name": str(paper.get("short_name", "")),
                 "year": str(paper.get("year", "")),
@@ -115,6 +154,12 @@ class ChromaStore:
                 "related_papers": ",".join(str(r) for r in paper.get("related_papers", [])),
                 "file": str(paper.get("file", "")),
             })
+
+        if skipped:
+            logging.getLogger("paper_kb_mcp").warning(
+                "以下论文文件未建立索引（papers/ 里的每个 .md 都需要唯一的整数 id: 字段）："
+                + ", ".join(skipped)
+            )
 
         if ids:
             # Delete orphans that no longer exist on disk, then upsert
@@ -194,8 +239,9 @@ class ChromaStore:
     def upsert_paper_by_file(self, filepath: Path):
         """Parse a paper markdown file and upsert it into the index."""
         paper = parse_paper(filepath)
-        if paper and paper.get("id") is not None:
-            self.upsert_paper(str(paper["id"]), paper)
+        paper_id = coerce_id((paper or {}).get("id"))
+        if paper_id is not None:
+            self.upsert_paper(str(paper_id), paper)
 
     def delete_paper(self, paper_id: str):
         """Delete a paper from the index."""
@@ -218,9 +264,12 @@ class ChromaStore:
         keywords_counter = {}
         methods = {}
         for meta in all_data.get("metadatas", []):
-            y = meta.get("year")
-            if y:
-                years.append(int(y) if isinstance(y, str) else y)
+            # Coerced, not appended raw: years come from hand-written frontmatter,
+            # and a single "2023a"/"preprint"/list value used to raise inside
+            # min()/max() and fail paper_index_stats for the entire vault.
+            year = _as_year(meta.get("year"))
+            if year is not None:
+                years.append(year)
             for kw in meta.get("keywords", "").split(", "):
                 kw = kw.strip()
                 if kw:

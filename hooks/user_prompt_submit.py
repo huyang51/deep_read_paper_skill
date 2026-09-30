@@ -135,6 +135,14 @@ def main():
         print(json.dumps({}))
         return
 
+    # .get() is what raises when stdin holds valid JSON that is not an object
+    # (`"hi"`, `[1,2]`), and it sits outside the try above — the hook then died
+    # with a traceback instead of emitting the empty result that means "no
+    # opinion", which is how a hook is supposed to decline.
+    if not isinstance(input_data, dict):
+        print(json.dumps({}))
+        return
+
     prompt = input_data.get("prompt", "")
     keywords = load_keywords()
     matched = match_keywords(prompt, keywords)

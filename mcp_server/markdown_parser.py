@@ -1,3 +1,4 @@
+import os
 import re
 import frontmatter
 from datetime import date
@@ -93,16 +94,38 @@ def invalidate_papers_cache():
     _all_papers_cache["papers_dir"] = None
 
 
+def coerce_id(value) -> Optional[int]:
+    """Frontmatter ``id`` as an int, or None when it is not a usable id.
+
+    YAML decides the type from how it was written, and these files are routinely
+    hand-edited: ``id: 7`` is an int, ``id: "7"`` is a str. Comparing the two
+    misses, and mixing them in ``max()`` raises TypeError — so everything that
+    reads an id goes through here first. ``True`` is rejected explicitly because
+    ``isinstance(True, int)`` is true in Python and ``id: yes`` would otherwise
+    silently become paper 1.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lstrip("-").isdigit():
+            return int(text)
+    return None
+
+
 def get_paper_by_id(paper_id: int, papers_dir: Path = None) -> Optional[dict]:
     """Find a paper by its ID. Returns the first match; logs a warning if
     multiple files share the same ID (should not happen after idempotency fix)."""
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
+    paper_id = coerce_id(paper_id)
     matches = []
     for paper_file in papers_dir.glob("*.md"):
         parsed = parse_paper(paper_file)
-        if parsed and parsed.get("id") == paper_id:
+        if parsed and coerce_id(parsed.get("id")) == paper_id:
             matches.append(parsed)
 
     if not matches:
@@ -110,17 +133,26 @@ def get_paper_by_id(paper_id: int, papers_dir: Path = None) -> Optional[dict]:
     if len(matches) > 1:
         import logging
         logger = logging.getLogger("paper_kb_mcp")
-        logger.warning(f"Duplicate paper_id={paper_id} found in {len(matches)} files: "
-                       f"{[m.get('file', '?') for m in matches]}; returning newest.")
+        # Says which file actually won: this used to claim "returning newest"
+        # while returning matches[0], i.e. whatever glob() happened to list
+        # first — the one message a user debugging duplicate ids would trust.
+        logger.warning(
+            f"Duplicate paper_id={paper_id} in {len(matches)} files: "
+            f"{[m.get('file', '?') for m in matches]}; 本次用的是 "
+            f"{matches[0].get('file', '?')}（顺序取决于文件系统，请修掉重复 id）。")
     return matches[0]
 
 
 def get_next_id(papers_dir: Path = None) -> int:
-    """Get the next available paper ID."""
-    papers = get_all_papers(papers_dir)
-    if not papers:
-        return 1
-    return max(p.get("id", 0) for p in papers) + 1
+    """Get the next available paper ID.
+
+    Ids are coerced and unusable ones skipped: a single hand-edited ``id: "7"``
+    used to make ``max()`` raise TypeError, which took down every paper_index
+    call for the whole vault.
+    """
+    ids = [i for i in (coerce_id(p.get("id")) for p in get_all_papers(papers_dir))
+           if i is not None]
+    return max(ids) + 1 if ids else 1
 
 
 def _make_safe_filename(name: str) -> str:
@@ -135,35 +167,38 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     """Create a paper markdown file with YAML frontmatter. Returns the file path.
 
     Idempotent: if a paper with the same ID already exists, the existing file is
-    overwritten (updated) rather than creating a duplicate file.
+    overwritten (updated) rather than creating a duplicate file. A filename that
+    belongs to a *different* paper is a hard error, never an overwrite.
     """
-    import logging
-    logger = logging.getLogger("paper_kb_mcp")
-
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
     papers_dir.mkdir(parents=True, exist_ok=True)
 
-    paper_id = paper_data.get("id")
+    paper_id = coerce_id(paper_data.get("id"))
     # The previous version of this file: read it BEFORE the idempotency delete
     # below, because this whitelist is a full rewrite and anything the caller
     # omits (relations, read_mode) must be carried over deliberately.
     prev = get_paper_by_id(paper_id, papers_dir) if paper_id is not None else None
-    kept_newline = None
+
+    # The file this paper already occupies — remembered, not deleted. The old
+    # order unlinked it here and only wrote the replacement ~70 lines later, so
+    # anything that failed in between (a locked file, a disk error, an
+    # unserializable metadata value) left the note destroyed and the update
+    # failed. Deleting after the new file is safely on disk makes the rewrite
+    # atomic from the reader's point of view.
+    old_path = None
+    if prev and prev.get("file"):
+        candidate = papers_dir.parent / prev["file"]
+        if candidate.exists():
+            old_path = candidate
+    # Read the convention before writing: an idempotent re-index of an LF paper
+    # must not come back as a whole-file CRLF rewrite.
+    kept_newline = _detect_newline(old_path) if old_path else None
+
     if paper_id is None:
         paper_id = get_next_id(papers_dir)
         paper_data["id"] = paper_id
-    else:
-        # Idempotency check: if a file with this ID already exists, overwrite it
-        if prev and prev.get("file"):
-            existing_path = papers_dir.parent / prev["file"]
-            if existing_path.exists():
-                # Read the convention BEFORE deleting: an idempotent re-index of
-                # an LF paper must not come back as a whole-file CRLF rewrite.
-                kept_newline = _detect_newline(existing_path)
-                # Delete old file first to avoid duplicate ID files
-                existing_path.unlink()
 
     short_name = paper_data.get("short_name", "")
     if short_name:
@@ -174,18 +209,23 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     filename = f"{safe_name}.md"
     filepath = papers_dir / filename
 
-    # Collision check: if a DIFFERENT-ID paper already uses this filename, warn
-    if filepath.exists():
-        try:
-            existing = parse_paper(filepath)
-            existing_id = existing.get("id") if existing else None
-            if existing_id is not None and existing_id != paper_id:
-                logger.warning(
-                    f"Filename collision: '{filename}' already used by paper_id={existing_id}, "
-                    f"now being overwritten by paper_id={paper_id}. Consider using unique short_names."
-                )
-        except Exception:
-            pass
+    # Refuse the collision; do not warn and write. This filename may already
+    # belong to a *different* paper, and the old code logged a warning and
+    # truncated it: the note became a description of another paper while its
+    # ChromaDB entry, every `relations` entry naming its id and every [[wikilink]]
+    # to its short_name stayed put — a vault that quietly lies, returned as
+    # {"status": "ok"}. A clash is a naming mistake the caller can fix by picking
+    # another short_name; a destroyed note is not recoverable. Rewriting the
+    # paper that already owns this filename is the idempotent update this
+    # function exists for, and is exempt.
+    if filepath.exists() and (old_path is None or filepath != old_path):
+        existing = parse_paper(filepath)
+        existing_id = coerce_id((existing or {}).get("id"))
+        holder = f"论文 ID={existing_id}" if existing_id is not None else "另一个没有 id 的条目"
+        raise FileExistsError(
+            f"文件名冲突：{filename} 已属于{holder}，不能覆盖。"
+            f"请给当前这篇（ID={paper_id}）换一个 short_name 后重试。"
+        )
 
     # Structured relations carry the semantics; related_papers is the legacy
     # projection other queries still read. Declared relations win and the
@@ -230,10 +270,23 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     post = frontmatter.Post(body, **metadata)
     file_content = frontmatter.dumps(post)
 
-    # frontmatter.dumps may add extra blank lines at the end; normalize
+    # frontmatter.dumps may add extra blank lines at the end; normalize.
+    # Written aside and swapped in: os.replace is atomic within a filesystem, so
+    # readers see either the old note or the new one, never a half-written file.
     newline = kept_newline or _detect_newline(filepath)
-    with open(filepath, "w", encoding="utf-8", newline=newline) as f:
-        f.write(file_content.rstrip() + "\n")
+    tmp_path = filepath.with_name(filepath.name + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8", newline=newline) as f:
+            f.write(file_content.rstrip() + "\n")
+        os.replace(tmp_path, filepath)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    # A renamed short_name moves the paper: drop the file it used to live in now
+    # that the new one is on disk, so the id never spans two files.
+    if old_path is not None and old_path != filepath and old_path.exists():
+        old_path.unlink()
 
     invalidate_papers_cache()
     return filepath
@@ -258,7 +311,11 @@ def _detect_newline(path: Path) -> str:
     already tolerates and what keeps output platform-independent.
     """
     try:
-        head = path.open("rb").read(4096)
+        # Closed explicitly, not left to refcounting: a dangling handle on
+        # Windows keeps the file locked, and the caller's next act on an update
+        # is to unlink the previous path.
+        with path.open("rb") as handle:
+            head = handle.read(4096)
     except OSError:
         return "\n"
     return "\r\n" if b"\r\n" in head else "\n"
@@ -517,13 +574,18 @@ def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
         filepath = vault_dir / file_rel
         if filepath.exists():
             filepath.unlink()
+            # The cache outlives the file (5s TTL), and the watcher reacts to
+            # this deletion by re-indexing from it — without this the paper was
+            # upserted straight back into ChromaDB and paper_search kept
+            # returning a paper whose note no longer existed.
+            invalidate_papers_cache()
             return True
 
     # Fallback: scan all .md files in papers_dir by frontmatter ID
     for f in papers_dir.glob("*.md"):
         try:
             parsed = parse_paper(f)
-            if parsed and parsed.get("id") == paper_id:
+            if parsed and coerce_id(parsed.get("id")) == coerce_id(paper_id):
                 f.unlink()
                 invalidate_papers_cache()
                 return True
@@ -531,3 +593,64 @@ def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
             continue
 
     return False
+
+
+def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
+                           papers_dir: Path = None) -> list:
+    """Strip every reference to a just-deleted paper from the papers that remain.
+
+    deleting the note does not delete the references to it: the other papers keep
+    ``relations`` entries naming its id, the ``related_papers`` projection, and
+    ``## 后续引用`` links naming its short_name. Left alone those become
+    ``unknown_target`` errors in tools/verify_graph_arrows.py and ghost nodes in
+    the Obsidian graph, and an edge the deleted paper used to *own* simply
+    disappears with no record anywhere.
+
+    Graph edges are repaired here rather than by sync_graph_edges(), which is
+    deliberately conservative: it only removes a link when a *declaration* points
+    the other way, and the declaration is exactly what has just been deleted —
+    so it would classify the stale link as "legacy, leave it".
+
+    Returns the ids of the papers that were rewritten.
+    """
+    if papers_dir is None:
+        papers_dir = PAPERS_DIR
+
+    deleted_id = coerce_id(deleted_id)
+    touched = []
+    for paper in get_all_papers(papers_dir):
+        pid = coerce_id(paper.get("id"))
+        if pid is None or pid == deleted_id:
+            continue
+
+        entries = relations_of(paper)
+        kept_entries = [e for e in entries if e["target"] != deleted_id]
+        legacy = paper.get("related_papers") or []
+        if kept_entries:
+            kept_legacy = project_related_papers(kept_entries)
+        else:
+            kept_legacy = [r for r in legacy if coerce_id(r) != deleted_id]
+
+        path = _paper_path(paper, papers_dir)
+        if path is None:
+            continue
+        body = paper.get("body", "")
+        before, links, after = _split_followup(body)
+        kept_links = ([l for l in links if l != deleted_short_name]
+                      if deleted_short_name else links)
+
+        if (len(kept_entries) == len(entries) and len(kept_legacy) == len(legacy)
+                and kept_links == links):
+            continue
+
+        metadata = {k: v for k, v in paper.items() if k not in ("body", "file")}
+        metadata["relations"] = kept_entries
+        metadata["related_papers"] = kept_legacy
+        _write_paper(path, metadata,
+                     _rebuild_followup(before, kept_links, after)
+                     if kept_links != links else body)
+        touched.append(pid)
+
+    if touched:
+        invalidate_papers_cache()
+    return touched
