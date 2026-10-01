@@ -1,11 +1,13 @@
 {
-  "search": "",
+  "search": "-path:reports/ -path:insights/ -path:.obsidian/templates/",
   "showTags": true,
   "showAttachments": false,
   "hideUnresolved": false,
   "showOrphans": true,
   "collapse-color-groups": true,
-  "colorGroups": [],
+  "colorGroups": [
+    { "query": "path:papers/", "color": { "a": 1, "rgb": 3900150 } }
+  ],
   "collapse-display": true,
   "showArrow": true,
   "textFadeMultiplier": -3,
@@ -17,10 +19,5 @@
   "linkStrength": 1,
   "linkDistance": 250,
   "scale": 1,
-  "close": true,
-  "filters": [
-    { "type": "path", "pattern": "reports/", "color": "red", "label": "Reports" },
-    { "type": "path", "pattern": "insights/", "color": "green", "label": "Insights" },
-    { "type": "path", "pattern": ".obsidian/templates/", "color": "blue", "label": "Templates" }
-  ]
+  "close": true
 }

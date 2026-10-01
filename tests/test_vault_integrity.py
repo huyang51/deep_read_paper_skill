@@ -189,6 +189,85 @@ class DeletionTest(TempVaultCase):
     def test_missing_paper_reports_failure(self):
         self.assertFalse(mp.delete_paper_file(99, self.papers))
 
+
+class PathEscapeTest(TempVaultCase):
+    """A hand-edited (or imported) frontmatter ``file:`` that escapes the vault
+    must never become a write or an unlink outside it.
+
+    Two layers protect this: ``parse_paper`` overwrites the field with the
+    note's real location, and ``_safe_vault_path`` refuses to resolve anything
+    that would land outside the vault root — the guard is what keeps a future
+    caller that trusts raw frontmatter from reopening the hole.
+    """
+
+    def poison(self, pid, target):
+        """Point an existing paper's ``file:`` at an arbitrary path."""
+        path = self.papers / f"{self.read(pid)['short_name']}.md"
+        text = path.read_text(encoding="utf-8")
+        poisoned = text.replace("---\n", f"---\nfile: {target}\n", 1)
+        if poisoned == text:
+            self.fail("template changed: no frontmatter to poison")
+        path.write_text(poisoned, encoding="utf-8")
+        mp.invalidate_papers_cache()
+
+    def test_guard_rejects_escapes(self):
+        inside = mp._safe_vault_path("papers/ReT.md", self.papers)
+        self.assertEqual(inside, (self.vault / "papers" / "ReT.md").resolve())
+        self.assertIsNone(mp._safe_vault_path("", self.papers))
+        self.assertIsNone(mp._safe_vault_path("../precious.txt", self.papers))
+        self.assertIsNone(mp._safe_vault_path("a/../../precious.txt",
+                                              self.papers))
+        self.assertIsNone(
+            mp._safe_vault_path(str(self.vault.parent / "x.md"), self.papers))
+
+    def test_guard_allows_absolute_paths_inside_the_vault(self):
+        """tools/index_paper.py records absolute file paths; they must pass."""
+        target = self.vault / "papers" / "ReT.md"
+        resolved = mp._safe_vault_path(str(target), self.papers)
+        self.assertEqual(resolved, target.resolve())
+
+    def test_delete_ignores_a_file_field_pointing_outside(self):
+        sentinel = self.vault / "precious.txt"
+        sentinel.write_text("keep me", encoding="utf-8")
+        self.make(1, "ReT", 2024)
+        self.poison(1, "../precious.txt")
+
+        self.assertTrue(mp.delete_paper_file(1, self.papers))
+
+        self.assertTrue(sentinel.exists())
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me")
+        self.assertFalse((self.papers / "ReT.md").exists())  # real note still
+        # went — via the sanitized path / frontmatter-ID scan
+
+    def test_relation_sync_writes_through_the_real_path_not_the_poisoned_one(self):
+        """parse_paper re-derives ``file:`` from the note's location, so a
+        poisoned field neither redirects the write nor breaks the sync."""
+        sentinel = self.vault / "precious.txt"
+        sentinel.write_text("keep me", encoding="utf-8")
+        self.make(1, "Old", 2020)
+        self.poison(1, "../precious.txt")
+        self.make(2, "New", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "基于它"}])
+
+        result = mp.sync_paper_relations(self.read(2), self.papers)
+
+        self.assertEqual(result["mirrored"], [1])
+        self.assertEqual(result["missing"], [])
+        self.assertTrue(sentinel.exists())
+        self.assertIn("[[New]]", self.read(1)["body"])
+
+    def test_reindex_does_not_unlink_through_an_escaped_previous_file(self):
+        sentinel = self.vault / "precious.txt"
+        sentinel.write_text("keep me", encoding="utf-8")
+        self.make(1, "ReT", 2024)
+        self.poison(1, "../precious.txt")
+
+        self.make(1, "ReT", 2024, title="Rewritten")
+
+        self.assertTrue(sentinel.exists())
+        self.assertEqual(self.read(1)["title"], "Rewritten")
+
     def test_cleanup_removes_relations_projection_and_edge(self):
         """Both directions: 3 points back at the deleted paper, and 1 — the
         earlier one — owns the `## 后续引用` edge naming it."""

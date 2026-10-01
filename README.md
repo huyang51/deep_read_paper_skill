@@ -10,7 +10,7 @@
 <p align="center">
 English | <a href="README_CN.md">简体中文</a>
 <br/><br/>
-<img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
+<img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
 <img src="https://img.shields.io/badge/Claude%20Code-compatible-green.svg" alt="Claude Code compatible">
 <img src="https://img.shields.io/badge/license-MIT-purple.svg" alt="License: MIT">
 </p>
@@ -100,7 +100,7 @@ graph TD
 
 | Item | Requirement | Notes |
 |------|-------------|-------|
-| **Python** | **3.10+** | Matches `requires-python` in `pyproject.toml` |
+| **Python** | **3.9+** | Matches `requires-python` in `pyproject.toml`; the code deliberately avoids 3.10-only syntax |
 | **Conda** (Anaconda / Miniconda) | any | The skill **requires its own environment** (named `paper-kb` below) — not base, not a shared project env |
 | **Disk** | ~3 GB | CPU build of torch + embedding model + dependencies |
 | **Network** | Model download on first run | The default embedder `paraphrase-multilingual-MiniLM-L12-v2` is ~470 MB and comes from HuggingFace. Behind a slow/blocked connection set `HF_ENDPOINT=https://hf-mirror.com` or the first run hangs |
@@ -499,7 +499,7 @@ Yes — modify the workflow in `SKILL.md`. Update the report template in `refere
 | `sentence-transformers` | ≥2.2 | Embedding backend for the multilingual model (the default) — required by ChromaDB's embedding function. Not needed with `all-MiniLM-L6-v2`, which uses ChromaDB's bundled ONNX embedder (still needs `onnxruntime`, installed with chromadb) |
 | `markdown` | ≥3.4 | md → HTML reading view (`tools/render_report.py`); KaTeX comes from CDN or the optional local cache — no LaTeX toolchain needed |
 
-All pure Python — clean install on Linux, macOS, Windows.
+Pure-Python installs except the ML stack: `sentence-transformers` pulls in PyTorch (~520 MB on Windows, multi-GB CUDA wheels on Linux by default). The ONNX path (`all-MiniLM-L6-v2`) avoids torch entirely.
 
 ---
 

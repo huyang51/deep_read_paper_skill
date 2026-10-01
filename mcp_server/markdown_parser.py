@@ -189,8 +189,8 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     # atomic from the reader's point of view.
     old_path = None
     if prev and prev.get("file"):
-        candidate = papers_dir.parent / prev["file"]
-        if candidate.exists():
+        candidate = _safe_vault_path(prev["file"], papers_dir)
+        if candidate is not None and candidate.exists():
             old_path = candidate
     # Read the convention before writing: an idempotent re-index of an LF paper
     # must not come back as a whole-file CRLF rewrite.
@@ -292,12 +292,31 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     return filepath
 
 
-def _paper_path(paper: dict, papers_dir: Path) -> Optional[Path]:
-    file_rel = paper.get("file", "")
+def _safe_vault_path(file_rel: str, papers_dir: Path) -> Optional[Path]:
+    """Resolve a frontmatter ``file:`` value, refusing paths outside the vault.
+
+    The field is hand-editable in Obsidian and an imported vault may carry any
+    value at all; without this guard an ``update_paper_relations`` writes and a
+    ``delete_paper_file`` unlinks wherever the string points. An escape resolves
+    to None — every caller already treats that as "nothing to do here" — so the
+    write/delete through the poisoned path is blocked while one bad note cannot
+    break operations on the rest of the vault.
+    """
     if not file_rel:
         return None
-    filepath = papers_dir.parent / file_rel
-    return filepath if filepath.exists() else None
+    vault_dir = papers_dir.parent
+    try:
+        resolved = (vault_dir / file_rel).resolve()
+        if not resolved.is_relative_to(vault_dir.resolve()):
+            return None
+    except (OSError, ValueError):
+        return None
+    return resolved
+
+
+def _paper_path(paper: dict, papers_dir: Path) -> Optional[Path]:
+    filepath = _safe_vault_path(paper.get("file", ""), papers_dir)
+    return filepath if filepath is not None and filepath.exists() else None
 
 
 def _detect_newline(path: Path) -> str:
@@ -569,10 +588,12 @@ def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
 
     file_rel = paper.get("file", "")
     if file_rel:
-        # Construct path relative to the papers_dir's parent vault
-        vault_dir = papers_dir.parent
-        filepath = vault_dir / file_rel
-        if filepath.exists():
+        # Construct path relative to the papers_dir's parent vault. The guard
+        # refuses a ``file:`` that escapes the vault, so a hand-edited or
+        # imported frontmatter cannot make this delete an arbitrary file; the
+        # ID scan below still finds the real note inside papers_dir.
+        filepath = _safe_vault_path(file_rel, papers_dir)
+        if filepath is not None and filepath.exists():
             filepath.unlink()
             # The cache outlives the file (5s TTL), and the watcher reacts to
             # this deletion by re-indexing from it — without this the paper was

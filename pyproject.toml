@@ -21,7 +21,7 @@ name = "deep-read-paper-skill"
 dynamic = ["version", "dependencies"]
 description = "Deep academic paper reading skill for Claude Code with a persistent Obsidian + ChromaDB knowledge vault"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = "MIT"
 
 [project.scripts]

@@ -719,17 +719,18 @@ python tools/migrate_relations.py --set-type 1=complementary --apply   # 类别�
 
 ### 4.6 Obsidian 图谱视图
 
-图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`insights/`、`.obsidian/templates/` 目录通过路径过滤器隐藏（用户可在图谱设置中手动切换）：
+图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`insights/`、`.obsidian/templates/` 目录通过 `search` 过滤串隐藏（用户可在图谱设置的搜索框中手动切换），论文节点经 `colorGroups` 以主色高亮、一眼可辨：
 
 ```json
 {
-  "filters": [
-    { "type": "path", "pattern": "reports/", "color": "red", "label": "Reports" },
-    { "type": "path", "pattern": "insights/", "color": "green", "label": "Insights" },
-    { "type": "path", "pattern": ".obsidian/templates/", "color": "blue", "label": "Templates" }
+  "search": "-path:reports/ -path:insights/ -path:.obsidian/templates/",
+  "colorGroups": [
+    { "query": "path:papers/", "color": { "a": 1, "rgb": 3900150 } }
   ]
 }
 ```
+
+注意：Obsidian 的 graph 配置**没有 `filters` 键**——隐藏靠 `search` 过滤串、着色靠 `colorGroups`，不要写不存在的键（会被整体忽略，视图行为与配置看似不符）。
 
 papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱中显示为干净的模型名节点。各论文的裁图存于 vault 的 `attachments/<short_name>/`（PNG + manifest.json，见 1.3），`graph.json` 的 `showAttachments: false` 使其不进入图谱视图，仅供报告相对路径引用。
 

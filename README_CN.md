@@ -10,7 +10,7 @@
 <p align="center">
 <a href="README.md">English</a> | 简体中文
 <br/><br/>
-<img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
+<img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
 <img src="https://img.shields.io/badge/Claude%20Code-compatible-green.svg" alt="Claude Code compatible">
 <img src="https://img.shields.io/badge/license-MIT-purple.svg" alt="License: MIT">
 </p>
@@ -100,7 +100,7 @@ graph TD
 
 | 项 | 要求 | 说明 |
 |---|---|---|
-| **Python** | **3.10+** | 与 `pyproject.toml` 的 `requires-python` 一致 |
+| **Python** | **3.9+** | 与 `pyproject.toml` 的 `requires-python` 一致（代码刻意避开 3.10 独有语法） |
 | **Conda**（Anaconda / Miniconda） | 任意版本 | 本 skill **要求一个专用环境**（下称 `paper-kb`）——不要装进 base，也不要跟别的项目共用 |
 | **磁盘** | 约 3 GB | CPU 版 torch + 嵌入模型 + 依赖 |
 | **网络** | 首次运行需下载嵌入模型 | 默认模型 `paraphrase-multilingual-MiniLM-L12-v2` 约 470 MB，从 HuggingFace 拉取；国内网络请先设 `HF_ENDPOINT=https://hf-mirror.com`，否则会卡在下载 |
@@ -487,7 +487,7 @@ python tools/render_report.py --md "<报告>.md" --embed-katex
 | `sentence-transformers` | ≥2.2 | 多语言 embedding 模型（默认）的加载后端，ChromaDB embedding function 依赖；用 `all-MiniLM-L6-v2` 时不需要（走 ChromaDB 自带 ONNX，仍需 `onnxruntime`，随 chromadb 安装） |
 | `markdown` | ≥3.4 | md → HTML 阅读视图渲染（`tools/render_report.py`）；KaTeX 走 CDN 或可选的本地缓存，无需 LaTeX 工具链 |
 
-全部为纯 Python，在 Linux、macOS、Windows 上均可安装。
+除 ML 栈外均为纯 Python：`sentence-transformers` 会连带安装 PyTorch（Windows 约 520 MB，Linux 默认拉取 CUDA 版、体积达 GB 级）；走 ONNX 路径（`all-MiniLM-L6-v2`）可完全避开 torch。
 
 ---
 
