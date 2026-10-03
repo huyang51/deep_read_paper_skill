@@ -118,7 +118,8 @@ def normalize_relations(raw) -> tuple[list[dict], list[str]]:
         direction = item.get("direction")
         direction = direction.strip() if isinstance(direction, str) else ""
         entries.append({"target": target, "type": rtype,
-                        "direction": direction, "note": _clean_note(item.get("note"))})
+                        "direction": direction, "note": _clean_note(item.get("note")),
+                        **({"synced": True} if item.get("synced") else {})})
     return entries, warnings
 
 
@@ -338,13 +339,20 @@ def describe(entry: dict) -> str:
 
 
 def merge_relation(entries: list[dict], target: int, rtype: str,
-                   direction: str, note: str = "") -> tuple[list[dict], bool]:
+                   direction: str, note: str = "",
+                   mark_synced: bool = False) -> tuple[list[dict], bool]:
     """Add-or-update one relation inside ``entries`` (in place, sorted).
 
     Idempotent by target, which is what the reciprocal sync needs: syncing the
     same pair twice must not append a duplicate row. An existing entry is only
     overwritten when the caller supplies a different non-empty value, so a
     sync never silently erases a richer hand-written note.
+
+    ``mark_synced`` flags the entry as a *mirror* — written by sync_relations
+    on behalf of the other side's declaration rather than declared by this
+    paper's own frontmatter. That flag is what makes relation removal
+    self-healing safe: when the declaration disappears, only flagged mirrors
+    may be removed, never an entry the other paper declared on its own.
     """
     for e in entries:
         if e["target"] == target:
@@ -355,8 +363,13 @@ def merge_relation(entries: list[dict], target: int, rtype: str,
                 e["direction"], changed = direction, True
             if note and e["note"] != note:
                 e["note"], changed = _clean_note(note), True
+            if mark_synced and not e.get("synced"):
+                e["synced"], changed = True, True
             return entries, changed
-    entries.append({"target": int(target), "type": rtype,
-                    "direction": direction, "note": _clean_note(note)})
+    new = {"target": int(target), "type": rtype,
+           "direction": direction, "note": _clean_note(note)}
+    if mark_synced:
+        new["synced"] = True
+    entries.append(new)
     entries.sort(key=lambda e: e["target"])
     return entries, True

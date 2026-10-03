@@ -435,13 +435,16 @@ async def handle_paper_index(params: dict) -> str:
     # Structured relations are the source of truth: mirror them onto the papers
     # this one points at (reciprocal entries + related_papers projection) and
     # place the ## 后续引用 graph edges by declared direction instead of
-    # assuming "the paper just indexed is the newest".
+    # assuming "the paper just indexed is the newest". This runs even when the
+    # paper now declares nothing: clearing relations is exactly when stale
+    # mirrors on the other side need the self-heal.
     #
     # This runs BEFORE the vector index on purpose: frontmatter and graph edges
     # are the durable part of an index and must not be lost because the store
     # could not be built (missing embedding model, offline download).
-    sync = sync_paper_relations(paper) if relations_of(paper) else {}
-    if sync.get("mirrored") or sync.get("derived") or sync.get("edges_updated"):
+    sync = sync_paper_relations(paper)
+    if (sync.get("mirrored") or sync.get("derived") or sync.get("edges_updated")
+            or sync.get("healed")):
         invalidate_papers_cache()
 
     payload = {
@@ -451,12 +454,13 @@ async def handle_paper_index(params: dict) -> str:
         "message": f"论文已{'更新' if is_update else '创建'}: {paper.get('title')}"
     }
     warnings = []
-    if relations_of(paper):
+    if relations_of(paper) or sync.get("healed"):
         payload["relations_synced"] = {
             "mirrored_to": sync.get("mirrored", []),
             "unresolved_targets": sync.get("missing", []),
             "legacy_migrated": sync.get("derived", []),
             "graph_edges_updated": sync.get("edges_updated", []),
+            "stale_mirrors_removed": sync.get("healed", []),
         }
         if sync.get("missing"):
             warnings.append(

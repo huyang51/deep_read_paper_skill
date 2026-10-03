@@ -497,6 +497,35 @@ def update_paper_relations(paper_id: int, entries: list[dict],
     return True
 
 
+def _link_resolver(index: dict) -> dict:
+    """Link text (or legacy label) -> paper id, first form wins.
+
+    Shared by everything that must decide which paper a ``[[wikilink]]`` names:
+    the canonical file stem first, then the short name and the title as the
+    forms older vaults wrote.
+    """
+    resolver: dict[str, int] = {}
+    for pid, p in index.items():
+        for label in (_link_text(p), p.get("short_name", ""), p.get("title", "")):
+            if label:
+                resolver.setdefault(label, pid)
+    return resolver
+
+
+def _drop_links_to(body: str, resolver: dict, dead_ids: set) -> tuple[str, bool]:
+    """Remove ``## 后续引用`` links that resolve to any of ``dead_ids``.
+
+    Returns ``(body, changed)``; bodies without the section come back untouched.
+    """
+    before, links, after = _split_followup(body)
+    if not links:
+        return body, False
+    kept = [l for l in links if resolver.get(l) not in dead_ids]
+    if kept == links:
+        return body, False
+    return _rebuild_followup(before, kept, after), True
+
+
 def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
     """Mirror a paper's declared relations onto the papers it points at.
 
@@ -508,20 +537,25 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
     Also regenerates ``related_papers`` on both sides as the projection of the
     relations, so the legacy field can never drift from the semantics.
 
-    Returns ``{"updated": [ids], "missing": [ids], "derived": [ids]}`` where
-    ``derived`` marks papers whose legacy ``related_papers`` had to be migrated
-    on the fly (they had no relations yet).
+    And it self-heals removal: a mirror this sync (or an earlier one) wrote
+    carries ``synced: true``; when the owning declaration is gone, the stale
+    mirror — and the followup edge that went with it — is cleaned up. Entries
+    the *other* paper declared on its own initiative carry no flag and are
+    never touched.
+
+    Returns ``{"updated": [ids], "missing": [ids], "derived": [ids],
+    "healed": [ids]}`` where ``derived`` marks papers whose legacy
+    ``related_papers`` had to be migrated on the fly (they had no relations
+    yet) and ``healed`` marks papers whose stale mirror was removed.
     """
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
-    result = {"updated": [], "missing": [], "derived": []}
+    result = {"updated": [], "missing": [], "derived": [], "healed": []}
     entries = relations_of(paper)
-    if not entries:
-        return result
 
     index = relation_index(get_all_papers(papers_dir))
-    self_id, self_short = paper.get("id"), paper.get("short_name", "")
+    self_id, self_short = coerce_id(paper.get("id")), paper.get("short_name", "")
 
     for entry in entries:
         other = index.get(entry["target"])
@@ -543,7 +577,7 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
 
         back, changed = merge_relation(back, self_id, entry["type"],
                                        inverse_direction(entry["direction"]),
-                                       note=entry["note"])
+                                       note=entry["note"], mark_synced=True)
         projection = project_related_papers(back)
         if changed or other.get("related_papers") != projection:
             metadata = {k: v for k, v in other.items()
@@ -553,7 +587,45 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
             _write_paper(path, metadata, other.get("body", ""))
             result["updated"].append(other["id"])
 
-    if result["updated"] or result["derived"]:
+    # ── self-heal: mirrors whose declaration is gone ─────────────────────
+    # Runs even when self declares nothing at all — clearing relations is
+    # exactly when stale mirrors are left behind. The followup edge goes with
+    # the mirror: sync_graph_edges would keep it as "legacy" (no declaration
+    # points the other way any more), so the heal strips it on both sides.
+    declared_ids = {e["target"] for e in entries}
+    resolver = _link_resolver(index)
+    if self_id is not None:
+        for pid, other in index.items():
+            if pid == self_id or pid in declared_ids:
+                continue
+            back = relations_of(other)
+            kept = [e for e in back
+                    if not (e["target"] == self_id and e.get("synced"))]
+            if len(kept) == len(back):
+                continue
+            path = _paper_path(other, papers_dir)
+            if path is None:
+                continue
+            body, _ = _drop_links_to(other.get("body", ""), resolver, {self_id})
+            metadata = {k: v for k, v in other.items()
+                        if k not in ("body", "file", "relations", "related_papers")}
+            metadata["relations"] = kept
+            metadata["related_papers"] = project_related_papers(kept)
+            _write_paper(path, metadata, body)
+            result["healed"].append(pid)
+        if result["healed"]:
+            # self may own the edge too (self was the earlier paper of a pair)
+            me = index.get(self_id)
+            my_path = _paper_path(me, papers_dir) if me else None
+            if my_path is not None:
+                body, dropped = _drop_links_to(me.get("body", ""), resolver,
+                                               set(result["healed"]))
+                if dropped:
+                    metadata = {k: v for k, v in me.items()
+                                if k not in ("body", "file")}
+                    _write_paper(my_path, metadata, body)
+
+    if result["updated"] or result["derived"] or result["healed"]:
         invalidate_papers_cache()
     return result
 
@@ -578,13 +650,7 @@ def sync_graph_edges(paper: dict, papers_dir: Path = None) -> dict:
         papers_dir = PAPERS_DIR
 
     index = relation_index(get_all_papers(papers_dir))
-    # A link written under any of the three forms resolves: the file stem
-    # (canonical), the short name and the title (legacy, from older vaults).
-    by_short: dict[str, int] = {}
-    for pid, p in index.items():
-        for label in (_link_text(p), p.get("short_name", ""), p.get("title", "")):
-            if label:
-                by_short.setdefault(label, pid)
+    by_short = _link_resolver(index)
 
     # ── desired state ────────────────────────────────────────────────────
     wanted: dict[int, set[str]] = {}
@@ -649,7 +715,8 @@ def sync_paper_relations(paper: dict, papers_dir: Path = None) -> dict:
     a reciprocal entry) vs ``edges_updated`` (papers whose ``## 后续引用`` was
     rewritten). They answer different questions, and both halves calling their
     list ``updated`` is how the first version of this function reported the edge
-    target as the mirrored paper.
+    target as the mirrored paper. ``healed`` (from the mirror half) lists papers
+    whose stale mirror was removed after the owning declaration disappeared.
     """
     mirrored = sync_relations(paper, papers_dir)
     edges = sync_graph_edges(paper, papers_dir)
@@ -657,6 +724,7 @@ def sync_paper_relations(paper: dict, papers_dir: Path = None) -> dict:
         "mirrored": mirrored["updated"],
         "missing": mirrored["missing"],
         "derived": mirrored["derived"],
+        "healed": mirrored["healed"],
         "edges_updated": edges["updated"],
         "edges_moved": edges["moved"],
     }

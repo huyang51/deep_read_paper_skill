@@ -145,7 +145,9 @@ def main():
     # decides which way an arrow points, so non-chronological reads need no
     # manual repair (the old add_backlinks_to_referenced_papers assumed the
     # paper being indexed was the newest).
-    sync = sync_paper_relations(paper) if relations_of(paper) else {}
+    # Runs even when the paper declares nothing: clearing relations is exactly
+    # when stale mirrors on the other side need the self-heal.
+    sync = sync_paper_relations(paper)
 
     result = {
         "status": "ok",
@@ -153,12 +155,13 @@ def main():
         "file": str(filepath),
         "message": f"Paper indexed: {paper.get('title')}"
     }
-    if sync:
+    if relations_of(paper) or sync.get("healed"):
         result["relations_synced"] = {
             "mirrored_to": sync.get("mirrored", []),
             "unresolved_targets": sync.get("missing", []),
             "legacy_migrated": sync.get("derived", []),
             "graph_edges_updated": sync.get("edges_updated", []),
+            "stale_mirrors_removed": sync.get("healed", []),
         }
 
     warnings = []

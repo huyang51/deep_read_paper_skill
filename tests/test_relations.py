@@ -356,6 +356,82 @@ class VaultTest(TempVaultCase):
         self.assertEqual(result["edges_updated"], [2])  # Mid got the [[New]] edge
         self.assertEqual(result["missing"], [])
 
+    def test_removing_a_declaration_heals_the_stale_mirror(self):
+        """The mirror and the graph edge a declaration produced must not outlive
+        the declaration: 2 declares 1 its predecessor, then drops the relation —
+        re-syncing 2 must remove 1's mirror entry, its projection and [[New]]."""
+        self._make(1, "Old", 2020)
+        self._make(2, "New", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "基于它"}])
+        self.mp.sync_paper_relations(self._read(2), self.papers)
+        self.assertEqual(R.relation_targets(self._read(1)), [2])   # mirror in place
+        self.assertIn("[[New]]", self._read(1)["body"])            # edge in place
+
+        self.assertTrue(self.mp.update_paper_relations(2, [], self.papers))  # cleared
+        result = self.mp.sync_paper_relations(self._read(2), self.papers)
+
+        self.assertEqual(result["healed"], [1])
+        old = self._read(1)
+        self.assertEqual(R.relations_of(old), [])                  # mirror gone
+        self.assertEqual(old["related_papers"], [])                # projection gone
+        self.assertNotIn("[[New]]", old["body"])                   # edge gone too
+
+    def test_healing_keeps_unrelated_mirrors_and_undeclared_entries(self):
+        """Only the stale pair is touched: a mirror for a still-declared pair
+        and an entry the other side declared on its own initiative both stay."""
+        self._make(1, "Old", 2020)
+        self._make(2, "New", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "基于它"}])
+        self._make(3, "Side", 2024)
+        self.mp.sync_paper_relations(self._read(2), self.papers)
+        # a hand declaration on 3 toward 1 — written raw, no synced flag
+        self.mp.update_paper_relations(3, [
+            {"target": 1, "type": "complementary", "direction": "peer",
+             "note": "手工添加"}], self.papers)
+
+        self.assertTrue(self.mp.update_paper_relations(2, [], self.papers))
+        result = self.mp.sync_paper_relations(self._read(2), self.papers)
+
+        self.assertEqual(result["healed"], [1])
+        self.assertEqual(R.relations_of(self._read(1)), [])        # stale mirror gone
+        self.assertEqual(R.relation_targets(self._read(3)), [1])   # hand entry kept
+
+    def test_reindex_without_the_relations_key_never_heals(self):
+        """An update that omits relations preserves them (the losslessness rule)
+        — so it must not strip the other side's mirror either."""
+        self._make(1, "Old", 2020)
+        self._make(2, "New", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "基于它"}])
+        self.mp.sync_paper_relations(self._read(2), self.papers)
+
+        self._make(2, "New", 2024, body="换了个正文。")              # no relations key
+        result = self.mp.sync_paper_relations(self._read(2), self.papers)
+
+        self.assertEqual(result["healed"], [])
+        self.assertEqual(R.relation_targets(self._read(1)), [2])
+
+    def test_heal_strips_the_edge_self_owns_too(self):
+        """When the cleared paper was the EARLIER one, the edge lived in its own
+        body — the heal must clean self's followup section, not just the other
+        side's frontmatter."""
+        self._make(1, "Old", 2020)
+        self._make(2, "New", 2024)
+        self.mp.update_paper_relations(1, [
+            {"target": 2, "type": "evolutionary", "direction": "successor",
+             "note": "它基于本文"}], self.papers)
+        self.mp.sync_paper_relations(self._read(1), self.papers)
+        self.assertIn("[[New]]", self._read(1)["body"])            # self owns the edge
+
+        self.assertTrue(self.mp.update_paper_relations(1, [], self.papers))
+        result = self.mp.sync_paper_relations(self._read(1), self.papers)
+
+        self.assertEqual(result["healed"], [2])
+        self.assertNotIn("[[New]]", self._read(1)["body"])         # self-side strip
+        self.assertEqual(R.relations_of(self._read(2)), [])        # mirror gone
+
     def test_sync_reports_unresolved_targets_instead_of_silently_dropping(self):
         self._make(1, "Solo", 2024, relations=[
             {"target": 42, "type": "method_similar", "direction": "peer", "note": "n"}])
