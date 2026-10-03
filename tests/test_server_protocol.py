@@ -55,6 +55,9 @@ class _StubStore:
     def index_all_papers(self):
         pass
 
+    def get_stats(self):
+        return {}
+
 
 async def _no_watcher():
     """Replaces watch_vault, which would otherwise watch a real directory."""
@@ -67,22 +70,39 @@ def drive_raw(text, store=_StubStore):
     stdout = _CaptureStdout()
 
     original = (server.get_store, server.watch_vault, sys.stdin, sys.stdout,
-                server.STARTUP_ERROR)
-    server.get_store = store
+                server.STARTUP_ERROR, server._index_ready,
+                server._index_init_lock)
+    # Memoize: the real get_store caches a singleton, and _CountingStore counts
+    # constructions — without memoization each get_store() call would build a
+    # fresh instance and "built exactly once" could never hold.
+    _instance = []
+
+    def _memo_store():
+        if not _instance:
+            _instance.append(store())
+        return _instance[0]
+
+    server.get_store = _memo_store
     server.watch_vault = _no_watcher
     sys.stdin, sys.stdout = stdin, stdout
+    # Reset the deferred-index state too: _index_ready leaked from an earlier
+    # drive() would let a session skip ensure_index_ready() entirely, and a
+    # lock created under one asyncio.run() loop cannot be reused under another.
+    server._index_ready = False
+    server._index_init_lock = None
     try:
         asyncio.run(server.main())
     finally:
         (server.get_store, server.watch_vault, sys.stdin, sys.stdout,
-         server.STARTUP_ERROR) = original
+         server.STARTUP_ERROR, server._index_ready,
+         server._index_init_lock) = original
 
     return stdout.messages()
 
 
-def drive(messages):
+def drive(messages, store=_StubStore):
     """Run the real main() loop over `messages`; return the replies it wrote."""
-    return drive_raw("".join(json.dumps(m) + "\n" for m in messages))
+    return drive_raw("".join(json.dumps(m) + "\n" for m in messages), store=store)
 
 
 def conversation(*messages):
@@ -169,6 +189,55 @@ class _BrokenStore:
 
     def init_collection(self):
         raise RuntimeError("unable to open database file")
+
+
+class _CountingStore(_StubStore):
+    """Records how many times the store was actually constructed."""
+
+    built = 0
+
+    def __init__(self):
+        _CountingStore.built += 1
+
+
+class LazyInitTest(unittest.TestCase):
+    """The heavy init must not run before the handshake.
+
+    On a fresh install, building the embedder downloads a 400MB+ model. That
+    used to sit in main() before `initialize` was answered, so the download
+    outlived the client's connect timeout: "Failed to connect", and the retry
+    loop started the download over. Now only the first index-backed tool call
+    pays for it.
+    """
+
+    def setUp(self):
+        _CountingStore.built = 0
+
+    def test_handshake_never_builds_the_store(self):
+        replies = drive(conversation(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        ))
+
+        self.assertEqual([r.get("id") for r in replies], [1, 2])
+        self.assertEqual(_CountingStore.built, 0)
+
+    def test_first_index_tool_builds_the_store_exactly_once(self):
+        replies = drive(conversation(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "paper_index_stats", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "paper_index_stats", "arguments": {}}},
+        ), store=_CountingStore)
+
+        self.assertEqual([r.get("id") for r in replies], [1, 2, 3])
+        self.assertNotIn("error", replies[1])
+        self.assertEqual(_CountingStore.built, 1)
+
+    def test_network_tools_do_not_trigger_the_model_download(self):
+        """cite_verify / paper_citations never touch the vector index, so being
+        the session's first call must not start a 400MB model download."""
+        self.assertNotIn("cite_verify", server._INDEX_TOOLS)
+        self.assertNotIn("paper_citations", server._INDEX_TOOLS)
 
 
 class StartupFailureTest(unittest.TestCase):

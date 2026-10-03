@@ -28,9 +28,63 @@ logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [
 logger = logging.getLogger("paper_kb_mcp")
 
 # Why the knowledge base is unusable, if it is. Set at startup (bad
-# settings.json, an uncreatable vault_dir, an index that will not open) and
-# reported through tools/call — see main(). Empty means everything is fine.
+# settings.json, an uncreatable vault_dir) or on first index use (an embedder
+# that will not download, an index that will not open) and reported through
+# tools/call — see main() and ensure_index_ready(). Empty means fine so far.
 STARTUP_ERROR = None
+
+# The heavy half of startup — building the embedder (a 400MB+ model download
+# on a fresh install) and indexing the vault — deliberately does NOT run before
+# the MCP handshake. It used to, and on a fresh install the download outlived
+# the client's ~30s connect timeout: the server never answered `initialize`,
+# every client reported "Failed to connect", and the kill/retry loop downloaded
+# the model again from scratch. Now the handshake answers immediately and the
+# first call to an index-backed tool pays the cost once, guarded by this lock.
+_index_ready = False
+_index_init_lock: Optional[asyncio.Lock] = None
+
+# Tools whose handlers touch the vector store. cite_verify / paper_citations
+# are network tools and must not trigger a model download just for being the
+# first thing the user calls.
+_INDEX_TOOLS = frozenset({
+    "paper_search", "paper_find_related", "paper_search_by_method",
+    "paper_index", "paper_remove", "paper_index_stats",
+})
+
+
+def _init_index_sync():
+    """The one-time heavy init, run in a worker thread."""
+    get_store().init_collection()
+    get_store().index_all_papers()
+    logger.info(f"Indexed {get_store().collection.count()} papers.")
+
+
+async def ensure_index_ready():
+    """Deferred first-use init for everything the vector index needs.
+
+    Follows the STARTUP_ERROR pattern: a failure is recorded and every
+    subsequent index tool reports it, instead of killing the process. Safe to
+    call concurrently — the asyncio.Lock serializes the first callers, the
+    flag short-circuits everyone after.
+    """
+    global _index_ready, _index_init_lock, STARTUP_ERROR
+    if _index_ready or STARTUP_ERROR:
+        return
+    if _index_init_lock is None:
+        _index_init_lock = asyncio.Lock()
+    async with _index_init_lock:
+        if _index_ready or STARTUP_ERROR:
+            return
+        try:
+            await asyncio.to_thread(_init_index_sync)
+            _index_ready = True
+        except Exception as e:
+            STARTUP_ERROR = (
+                f"向量索引初始化失败：{type(e).__name__}: {e}\n"
+                f"提示：若为模型下载问题，可设置环境变量 "
+                f"HF_ENDPOINT=https://hf-mirror.com 后重启。"
+            )
+            logger.error(f"{STARTUP_ERROR} —— 服务照常运行，索引类工具会返回这条错误。")
 
 # Lazy-initialized on first use to avoid side effects at import time
 # (e.g., when running tests or when ChromaDB init would fail).
@@ -536,6 +590,20 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
             }
         tool_name = params.get("name", "")
         tool_args = params.get("arguments", {})
+        if tool_name in _INDEX_TOOLS:
+            # First index-backed call of the session pays the one-time init
+            # (embedder load, vault scan). to_thread keeps the event loop free
+            # while a fresh-install model download grinds away in the worker.
+            await ensure_index_ready()
+            # The deferred init can fail (unopenable index, model that will
+            # not download). Report that instead of running the handler into
+            # the same wall and surfacing its raw traceback.
+            if STARTUP_ERROR:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32000, "message": f"知识库不可用：{STARTUP_ERROR}"}
+                }
         handler = TOOL_DISPATCH.get(tool_name)
         if not handler:
             return {
@@ -602,6 +670,10 @@ async def watch_vault():
     logger.info(f"Watching {PAPERS_DIR} for changes...")
     async for changes in awatch(PAPERS_DIR):
         logger.info(f"Detected changes: {changes}")
+        # The watcher can fire before any tool call (a save right after the
+        # handshake). Route through the deferred init so the embedder download
+        # happens in a worker thread instead of stalling this loop.
+        await ensure_index_ready()
         for change_type, path_str in changes:
             filepath = Path(path_str)
             if not filepath.suffix == ".md":
@@ -660,23 +732,19 @@ async def main():
 
     logger.info("Starting paper_kb_mcp server...")
 
-    # Initialize the index — never at the cost of the handshake. This runs before
-    # `initialize` is answered, so anything that raises here (a vault_dir that
-    # cannot be created, an index that cannot be opened, a bad settings.json)
-    # used to end the process before it said a word: the client reports "Failed
-    # to connect", zero tools exist, and the reason sits in a stderr log nobody
-    # reads. Recording it instead lets the tools register and hand the user the
-    # actual problem when they call one.
+    # Configuration problems are cheap to detect and worth knowing before the
+    # first tool call, so they still surface at startup (via tools/call, which
+    # reports STARTUP_ERROR — see the comment at the definition). The heavy
+    # index build moved to ensure_index_ready(): it must never run before the
+    # handshake, because on a fresh install the embedder download outlives the
+    # client's connect timeout and the session dies before it began.
     global STARTUP_ERROR
     STARTUP_ERROR = config.CONFIG_ERROR
     try:
         ensure_vault_dirs()
-        get_store().init_collection()
-        get_store().index_all_papers()
-        logger.info(f"Indexed {get_store().collection.count()} papers.")
     except Exception as e:
-        STARTUP_ERROR = STARTUP_ERROR or f"向量索引初始化失败：{type(e).__name__}: {e}"
-        logger.error(f"{STARTUP_ERROR} —— 服务照常启动，工具会返回这条错误。")
+        STARTUP_ERROR = STARTUP_ERROR or f"知识库目录初始化失败：{type(e).__name__}: {e}"
+        logger.error(f"{STARTUP_ERROR} —— 服务照常启动，索引类工具会返回这条错误。")
 
     # Start file watcher in background
     watcher_task = asyncio.create_task(watch_vault())
