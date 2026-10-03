@@ -36,6 +36,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent
@@ -225,11 +226,22 @@ def parse_args(argv=None):
                         help="覆盖已存在的 settings.json（先备份为 settings.json.bak）")
     parser.add_argument("--yes", "-y", action="store_true",
                         help="不再询问，直接采用默认值")
+    parser.add_argument("--light", action="store_true",
+                        help="轻量安装：跳过 sentence-transformers/torch，嵌入走 ChromaDB"
+                             " 自带 ONNX 模型（embedding_model 设为 all-MiniLM-L6-v2，"
+                             "英文为主、中文较弱；换模型等于换向量空间，已有 .chromadb 需重建）")
     return parser.parse_args(argv)
 
 
-def install_into_env(name: str, base: Path):
-    """Create the conda env if needed and install requirements into it."""
+def install_into_env(name: str, base: Path, light: bool = False):
+    """Create the conda env if needed and install requirements into it.
+
+    light=True installs the requirements WITHOUT the sentence-transformers
+    line: the ONNX embedder that replaces it runs on chromadb alone, and the
+    torch chain it pulls in is by far the heaviest part of the install. The
+    filter is derived from requirements.txt itself — the file stays the single
+    source of truth for what exists, light just skips one optional line.
+    """
     target = env_python(base, name)
 
     if not target.exists():
@@ -241,13 +253,21 @@ def install_into_env(name: str, base: Path):
     else:
         log(f"  [1/2] 复用已存在的 conda 环境 {name}")
 
+    requirements = REQUIREMENTS
+    if light:
+        kept = [ln for ln in REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+                if not ln.strip().startswith("sentence-transformers")]
+        requirements = Path(tempfile.gettempdir()) / "requirements-paper-kb-light.txt"
+        requirements.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        log("  （轻量方案：跳过 sentence-transformers/torch，嵌入走 ChromaDB 自带 ONNX）")
+
     log(f"  [2/2] 安装依赖到 {name}（首次约 280 MB 下载，几分钟）……")
     env = dict(os.environ)
     # pip otherwise counts packages in the user site as already satisfied and
     # skips them, leaving an env that breaks the moment user site is disabled.
     env["PYTHONNOUSERSITE"] = "1"
     proc = subprocess.run([str(target), "-m", "pip", "install",
-                           "-r", str(REQUIREMENTS)], env=env)
+                           "-r", str(requirements)], env=env)
     if proc.returncode != 0:
         die("依赖安装失败，请看上面的 pip 输出。")
     return target
@@ -275,7 +295,8 @@ def main(argv=None):
             forwarded += [flag, value]
     for flag, on in (("--register", args.register), ("--no-env", args.no_env),
                      ("--no-vault-template", args.no_vault_template),
-                     ("--force", args.force), ("--yes", args.yes)):
+                     ("--force", args.force), ("--yes", args.yes),
+                     ("--light", args.light)):
         if on:
             forwarded.append(flag)
 
@@ -288,7 +309,20 @@ def main(argv=None):
         die(f"需要 Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+，"
             f"当前是 {sys.version.split()[0]}")
 
-    broken = missing_imports()
+    light = args.light
+    if not light and not args.yes and sys.stdin.isatty():
+        # torch is the heaviest thing this skill installs and the multilingual
+        # model is its only user. An English-only vault on a small disk does
+        # not need either — ask, once, instead of forcing 2GB on everyone.
+        log("  嵌入方案：")
+        log("    [1] 多语言 SentenceTransformer（默认，中文检索好，含 torch 约 +2 GB）")
+        log("    [2] ONNX 轻量（免 torch，仅 ChromaDB 自带模型，英文为主、中文较弱）")
+        answer = input("  选择 [1]: ").strip()
+        light = answer == "2"
+        log()
+
+    needed = SERVER_IMPORTS if light else SERVER_IMPORTS + MODEL_IMPORTS
+    broken = missing_imports(needed)
     if broken:
         log("  当前解释器缺少依赖：")
         for item in broken:
@@ -302,7 +336,7 @@ def main(argv=None):
             die("没找到 conda。装好依赖后重跑，或手动执行：\n"
                 f"        {interpreter_path(sys.executable)} -m pip install -r requirements.txt\n"
                 "        （建议先用 conda 建独立环境，别装进系统 Python）")
-        target = install_into_env(args.env_name, base)
+        target = install_into_env(args.env_name, base, light=light)
         reap_exec(target, forwarded)
         return  # unreachable
 
@@ -329,6 +363,13 @@ def main(argv=None):
     payload["vault_dir"] = interpreter_path(vault)
     payload["project_dir"] = interpreter_path(project)
     payload["python_cmd"] = python_cmd
+    if light:
+        # The install just skipped torch; the settings must follow, or the
+        # server would still ask SentenceTransformer for a model it cannot load.
+        if payload.get("embedding_model") not in (None, "", "all-MiniLM-L6-v2"):
+            log(f"  [注意] --light 覆盖已有的 embedding_model="
+                f"{payload.get('embedding_model')} → all-MiniLM-L6-v2")
+        payload["embedding_model"] = "all-MiniLM-L6-v2"
 
     state = write_settings(payload, force=args.force)
     log()

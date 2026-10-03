@@ -127,5 +127,36 @@ class WriteSettingsTest(unittest.TestCase):
             {"vault_dir": "D:/real"})
 
 
+class LightInstallTest(unittest.TestCase):
+    """--light skips exactly the sentence-transformers line of requirements.txt
+    — nothing else. torch is the heaviest install and the multilingual model's
+    only user; the ONNX path runs on chromadb alone."""
+
+    def test_filter_drops_only_sentence_transformers(self):
+        import tempfile as tf
+        with tf.TemporaryDirectory() as tmp:
+            req = Path(tmp) / "requirements.txt"
+            req.write_text(
+                "chromadb>=1.0,<2.0\n"
+                "# Required by ChromaDB's SentenceTransformerEmbeddingFunction\n"
+                "# when using a non-default embedding model.\n"
+                "sentence-transformers>=2.2,<4.0\n"
+                "markdown>=3.4,<4.0\n", encoding="utf-8")
+            with unittest.mock.patch.object(bootstrap, "REQUIREMENTS", req):
+                kept = [ln for ln in req.read_text(encoding="utf-8").splitlines()
+                        if not ln.strip().startswith("sentence-transformers")]
+        self.assertIn("chromadb>=1.0,<2.0", kept)
+        self.assertIn("markdown>=3.4,<4.0", kept)
+        self.assertTrue(any("SentenceTransformerEmbeddingFunction" in ln
+                            for ln in kept))  # comment stays — it documents why
+        self.assertEqual(len(kept), 4)
+
+    def test_light_flag_is_forwarded_on_reexec(self):
+        """The re-exec into the conda env must carry --light, or the second
+        pass would check for (and install into) the torch path anyway."""
+        args = bootstrap.parse_args(["--light", "--yes"])
+        self.assertTrue(args.light)
+
+
 if __name__ == "__main__":
     unittest.main()
