@@ -22,7 +22,8 @@ from mcp_server.markdown_parser import (
 )
 from mcp_server.chroma_store import ChromaStore
 from mcp_server.cross_refs import find_related
-from mcp_server.relations import describe, relation_index, validate_relations, relations_of, WARN
+from mcp_server.relations import (describe, normalize_relations, relation_index,
+                                  relations_of, validate_relations, WARN)
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("paper_kb_mcp")
@@ -202,7 +203,7 @@ TOOLS = [
                 "problem_domain": {"type": "string", "default": "", "description": "问题领域"},
                 "keywords": {"type": "array", "items": {"type": "string"}, "default": [], "description": "关键词列表"},
                 "core_contribution": {"type": "string", "default": "", "description": "一句话核心贡献"},
-                "novelty_level": {"type": "string", "default": "", "description": "新颖性定级: incremental | substantial | breakthrough"},
+                "novelty_level": {"type": "string", "enum": ["incremental", "substantial", "breakthrough"], "default": "", "description": "新颖性定级：incremental（增量）| substantial（实质）| breakthrough（突破）"},
                 "relations": {
                     "type": "array",
                     "default": [],
@@ -423,6 +424,12 @@ async def handle_paper_index(params: dict) -> str:
     paper_dict = input_data.model_dump()
     is_update = paper_dict.get("paper_id") is not None
 
+    # normalize_relations is forgiving: a malformed entry is dropped so one
+    # typo can never break the write. Dropping silently, however, means the
+    # agent believes the relation was recorded — surface the warnings instead.
+    relations, rel_warnings = normalize_relations(paper_dict.get("relations"))
+    paper_dict["relations"] = relations
+
     try:
         filepath = create_paper_file(paper_dict)
     except Exception as e:
@@ -454,6 +461,11 @@ async def handle_paper_index(params: dict) -> str:
         "message": f"论文已{'更新' if is_update else '创建'}: {paper.get('title')}"
     }
     warnings = []
+    if rel_warnings:
+        # normalize_relations dropped malformed entries so the write could go
+        # through; the caller must know the recorded relations are fewer than
+        # the ones it sent.
+        warnings.append("relations 有条目被忽略：" + "；".join(rel_warnings))
     if relations_of(paper) or sync.get("healed"):
         payload["relations_synced"] = {
             "mirrored_to": sync.get("mirrored", []),
