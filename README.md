@@ -222,6 +222,20 @@ cp -r vault-template/ /your/knowledge-base/path/
 >
 > **Environment variable override**: Set `PAPER_KB_VAULT_DIR` to override `vault_dir`. Useful when sharing one skill installation across multiple projects.
 
+### What Lives Where (tuning the behavior)
+
+| You want to change… | Edit |
+|---------------------|------|
+| Workflow phases, triage tiers, QA gates | `SKILL.md` |
+| What each of the 11 dimensions asks, its output format, type-routing table, the 🌐/📊 hard checks | `references/dimensions.md` (single source; `SKILL.md` Phase 2 keeps only the overview + mapping table) |
+| Report structure and section numbers | `references/report_template.md` — keep its "structures the renderer recognizes" section in sync, that's what the HTML renderer parses |
+| How the report *looks* in HTML (palette, typography, TOC/zoom/theme) | `tools/render_report.py` |
+| Vault paper-file schema, relation rules, graph sync | `mcp_server/` (`markdown_parser.py`, `relations.py`) |
+| MCP tool schemas/behavior | `mcp_server/server.py` (keep `TOOLS` in sync with the Pydantic models — `tests/test_tools_schema.py` enforces this) |
+| Obsidian side (templates, Dataview, graph config) | `vault-template/` (seeded to a new vault by `bootstrap.py --seed-obsidian`; an existing vault is **not** auto-updated — additive only) |
+| Prompt-trigger keywords, vault path, embedding model | `settings.json` (see above) |
+| Hook-injected context | `hooks/user_prompt_submit.py`, `hooks/session_start.py` |
+
 ---
 
 ## Usage
@@ -491,7 +505,7 @@ python tools/render_report.py --md "<report>.md" --embed-katex
 <details>
 <summary><b>Q: Can I customize the analysis dimensions?</b></summary>
 
-Yes — modify the workflow in `SKILL.md`. Update the report template in `references/report_template.md` accordingly (its "structures the renderer recognizes" section is what keeps the HTML reading view laying out correctly), and keep the type-routing table in SKILL Phase 2 in sync (adding or removing a dimension changes the per-type "what bends" column).
+Yes — modify the workflow in `SKILL.md`. Update the report template in `references/report_template.md` accordingly (its "structures the renderer recognizes" section is what keeps the HTML reading view laying out correctly), and keep the type-routing table in `references/dimensions.md` in sync (adding or removing a dimension changes the per-type "what bends" column).
 </details>
 
 ---

@@ -218,6 +218,20 @@ cp -r vault-template/ /your/knowledge-base/path/
 >
 > **环境变量覆盖**：设置 `PAPER_KB_VAULT_DIR` 可覆盖 `vault_dir`，适合多项目共享同一 skill 安装。
 
+### 什么配置改哪里（想调行为先看这张表）
+
+| 想改什么 | 去改哪 |
+|----------|--------|
+| 工作流程、分诊档位、QA 门禁 | `SKILL.md` |
+| 11 个维度各自问什么、输出格式、类型路由调整表、🌐/📊 两道硬检查 | `references/dimensions.md`（单一来源；`SKILL.md` Phase 2 只留总览与映射表） |
+| 报告结构与章节编号 | `references/report_template.md`——同步维护其中"渲染器认识的结构"一节，HTML 渲染靠它 |
+| 报告 HTML 的外观（配色、排版、目录/缩放/主题切换） | `tools/render_report.py` |
+| Vault 论文文件结构、关系规则、图谱同步 | `mcp_server/`（`markdown_parser.py`、`relations.py`） |
+| MCP 工具的 schema 与行为 | `mcp_server/server.py`（`TOOLS` 必须与 Pydantic 模型同步——`tests/test_tools_schema.py` 强制对拍） |
+| Obsidian 侧（模板、Dataview、图谱配置） | `vault-template/`（由 `bootstrap.py --seed-obsidian` 播种到新 vault；存量 vault 只增不改，不会自动更新） |
+| 触发关键词、vault 路径、embedding 模型 | `settings.json`（见上） |
+| Hook 注入的上下文 | `hooks/user_prompt_submit.py`、`hooks/session_start.py` |
+
 ---
 
 ## 使用方法
@@ -478,7 +492,7 @@ python tools/render_report.py --md "<报告>.md" --embed-katex
 <details>
 <summary><b>Q: 可以自定义分析维度吗？</b></summary>
 
-可以——分析流程定义在 `SKILL.md` 中。修改 Phase 0-5 即可增删或重排分析维度，同步更新 `references/report_template.md` 中的报告模板（其中"渲染器认识的结构"一节决定 HTML 阅读视图能否正确排版）与 SKILL Phase 2『类型路由』表（增删维度后，各类型的"变化维度"列需同步）。
+可以——分析流程定义在 `SKILL.md` 中。修改 Phase 0-5 即可增删或重排分析维度，同步更新 `references/report_template.md` 中的报告模板（其中"渲染器认识的结构"一节决定 HTML 阅读视图能否正确排版）与 `references/dimensions.md` 的『类型路由』调整表（增删维度后，各类型的"变化维度"列需同步）。
 </details>
 
 ---
