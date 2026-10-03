@@ -451,5 +451,72 @@ class FakeCurrencyTest(unittest.TestCase):
                       .replace("</span>", "$"))
 
 
+class TemplateMastheadTest(unittest.TestCase):
+    """The template writes the masthead IN the body: first h1 = title, then a
+    key-value table. It never specified frontmatter, so meta_header (which
+    reads frontmatter) rendered an empty meta-grid and the page carried two
+    h1s — a broken first screen on every template-following report."""
+
+    TEMPLATE_LIKE = """# 视觉语言导航的层次化规划
+
+<div align="center">
+
+| | |
+|---|---|
+| **原文** | Hierarchical Planning for Vision-Language Navigation |
+| **作者** | 张三、李四 |
+| **发表** | CoRL, 2024 |
+| **阅读** | 2026-10-03 |
+
+</div>
+
+---
+
+## 1. 问题背景
+
+正文开始。
+
+## 2. 方法
+
+第二节正文。
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.md = Path(self.tmp.name) / "masthead_report.md"
+        self.md.write_text(self.TEMPLATE_LIKE, encoding="utf-8")
+        self.html_path = rr.render_report(self.md)
+        self.html = self.html_path.read_text(encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_title_promoted_no_double_h1(self):
+        self.assertIn("<title>视觉语言导航的层次化规划</title>", self.html)
+        self.assertEqual(self.html.count("<h1"), 1)
+
+    def test_kv_table_becomes_meta_grid(self):
+        self.assertIn("原文", self.html)
+        self.assertIn("张三、李四", self.html)
+        self.assertIn("meta-grid", self.html)
+
+    def test_masthead_rows_removed_from_body_flow(self):
+        self.assertNotIn("<div align=\"center\">", self.html)
+
+    def test_body_sections_survive(self):
+        self.assertIn("正文开始。", self.html)
+        self.assertIn("第二节正文。", self.html)
+
+    def test_plain_h1_without_kv_table_is_not_hijacked(self):
+        """An h1 with no masthead table under it is content — leave it in the
+        body and keep the default page title."""
+        md = Path(self.tmp.name) / "plain.md"
+        md.write_text("# 一篇普通文档\n\n## 1. 背景\n\n正文。\n", encoding="utf-8")
+        rr.render_report(md)
+        h = (md.with_suffix(".html")).read_text(encoding="utf-8")
+        self.assertIn("<title>论文解读报告</title>", h)
+        self.assertIn("<h1>一篇普通文档</h1>", h)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

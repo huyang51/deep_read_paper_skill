@@ -673,9 +673,54 @@ def reading_minutes(md_text):
     return max(1, round(cjk / 400 + words / 260))
 
 
-def meta_header(post, minutes):
+_KV_ROW = re.compile(r"^\|\s*\*\*(.+?)\*\*\s*\|\s*(.+?)\s*\|\s*$")
+
+
+def promote_body_masthead(body_md: str, metadata: dict):
+    """Lift the template's in-body masthead into the page header.
+
+    The report template never specified frontmatter: the title is the body's
+    first h1 and the metadata a key-value table right under it. meta_header
+    reads frontmatter, so every template-following report rendered an empty
+    meta-grid plus two h1s (masthead + page title) — a broken first screen on
+    every report, silently. When frontmatter has no title, promote the body
+    masthead instead: the h1 becomes the page title (removed from the body),
+    the ``| **label** | value |`` rows become meta-grid rows. Only a masthead
+    position is promoted — the h1 must precede any ``## `` heading — so a
+    document that merely reuses # later is never hijacked.
+
+    Returns (body_md, fallback_title_or_None, [(label, value), ...]).
+    """
+    if (metadata or {}).get("title"):
+        return body_md, None, []
+
+    h1 = re.search(r"^# (?!#)(.+?)\s*$", body_md, re.M)
+    if not h1 or re.search(r"^## ", body_md[:h1.start()], re.M):
+        return body_md, None, []
+
+    lines = body_md[h1.start():].splitlines(keepends=True)
+    rows = []
+    last_row = None  # index into lines of the final key-value row
+    for idx in range(1, len(lines)):
+        line = lines[idx]
+        if re.match(r"^## ", line):
+            break
+        row = _KV_ROW.match(line.strip())
+        if row:
+            rows.append((row.group(1), row.group(2)))
+            last_row = idx
+    if not rows:
+        return body_md, None, []  # an h1 alone is content, not a masthead
+
+    title = h1.group(1).strip()
+    remainder = "".join(lines[last_row + 1:])
+    return body_md[:h1.start()] + remainder, title, rows
+
+
+def meta_header(post, minutes, fallback_title=None, extra_rows=None):
     d = post.metadata or {}
-    title = str(d.get("title") or post.get("title") or "论文解读报告")
+    title = str(d.get("title") or fallback_title or post.get("title")
+                or "论文解读报告")
     badges = []
     if d.get("read_mode"):
         badges.append('<span class="badge">档位 %s</span>'
@@ -685,10 +730,17 @@ def meta_header(post, minutes):
                       % html_mod.escape(str(d["novelty_level"])))
     badges.append('<span class="badge">阅读约 %d 分钟</span>' % minutes)
     rows = []
+    seen_labels = set()
+    for label, val in (extra_rows or []):
+        seen_labels.add(label)
+        rows.append("<div><b>%s：</b>%s</div>" % (html_mod.escape(label),
+                                                  html_mod.escape(str(val))))
     labels = {"authors": "作者", "venue": "发表于", "year": "年份",
               "core_contribution": "核心贡献", "date_read": "阅读日期",
               "method_category": "方法类别", "problem_domain": "问题领域"}
     for key, label in labels.items():
+        if label in seen_labels:
+            continue  # the masthead table already carried this line
         val = d.get(key)
         if not val:
             continue
@@ -1182,7 +1234,9 @@ def render_report(md_path, out_path=None, offline=False, katex=None,
                   katex_dir=None):
     md_path = Path(md_path)
     post = frontmatter.load(str(md_path))
-    body_md = post.content
+    body_md, fallback_title, masthead_rows = promote_body_masthead(
+        post.content, post.metadata)
+    post = frontmatter.Post(body_md, **(post.metadata or {}))
 
     mode = "off" if offline else (katex or "cdn")
     needs_chem = bool(re.search(r"\\ce\{|\\pu\{", body_md))
@@ -1206,7 +1260,9 @@ def render_report(md_path, out_path=None, offline=False, katex=None,
     body_html = linkify_bare_urls(body_html)
     body_html = strip_empty_divs(body_html)
     toc, body_html = build_toc_and_ids(body_html)
-    badges, meta, title = meta_header(post, reading_minutes(body_md))
+    badges, meta, title = meta_header(post, reading_minutes(body_md),
+                                      fallback_title=fallback_title,
+                                      extra_rows=masthead_rows)
 
     dist = local_katex_dir(katex_dir) if mode == "embed" else None
     katex_head, katex_scripts, note = _katex_assets(mode, dist, needs_chem)
