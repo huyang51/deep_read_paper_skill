@@ -319,6 +319,79 @@ class PathEscapeTest(TempVaultCase):
         self.assertEqual(self.read(3)["related_papers"], [1])
 
 
+class WikilinkStemTest(TempVaultCase):
+    """``[[wikilink]]`` text must be the file stem, not the short name.
+
+    ``_make_safe_filename`` collapses whitespace to ``-``, so short_name
+    ``FLMR v2`` lives in ``FLMR-v2.md``; a ``[[FLMR v2]]`` link drawn from the
+    short name resolves to nothing and only renders as an Obsidian ghost node.
+    """
+
+    def make_spaced(self, pid, short, year, **kw):
+        """Create a paper whose short name contains a space (→ dashed file)."""
+        path = self.make(pid, short, year, **kw)
+        self.assertEqual(path.stem, short.replace(" ", "-"))
+        return path
+
+    def test_edge_uses_the_file_stem_as_link_text(self):
+        self.make_spaced(1, "FLMR v1", 2023)
+        self.make_spaced(2, "FLMR v2", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "基于它"}])
+
+        mp.sync_paper_relations(self.read(2), self.papers)
+
+        body = self.read(1)["body"]
+        self.assertIn("[[FLMR-v2]]", body)          # resolves to the real file
+        self.assertNotIn("[[FLMR v2]]", body)       # would be a ghost node
+
+    def test_legacy_short_name_link_is_migrated_to_the_stem(self):
+        self.make_spaced(1, "FLMR v1", 2023)
+        self.make_spaced(2, "FLMR v2", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "基于它"}])
+        mp.sync_paper_relations(self.read(2), self.papers)   # edge written first
+        old = self.read(1)
+        path = mp._paper_path(old, self.papers)
+        path.write_text(path.read_text(encoding="utf-8")
+                        .replace("[[FLMR-v2]]", "[[FLMR v2]]"), encoding="utf-8")
+        mp.invalidate_papers_cache()
+        self.assertIn("[[FLMR v2]]", self.read(1)["body"])   # stale form in place
+
+        mp.sync_paper_relations(self.read(2), self.papers)
+
+        body = self.read(1)["body"]
+        self.assertIn("[[FLMR-v2]]", body)          # rewritten, not duplicated
+        self.assertNotIn("[[FLMR v2]]", body)
+        self.assertEqual(body.count("## 后续引用"), 1)
+
+    def test_cleanup_removes_both_link_forms(self):
+        """Deletion cleans links naming the stem and the short name alike."""
+        self.make_spaced(1, "FLMR v1", 2023, body="正文。\n")
+        self.make_spaced(2, "Gone Note", 2023)
+        self.make_spaced(3, "FLMR v2", 2024, relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor"}])
+        mp.sync_paper_relations(self.read(3), self.papers)   # 1 gains [[FLMR-v2]]
+        # Inject the two stale forms a pre-fix vault would hold.
+        path1 = self.papers / "FLMR-v1.md"
+        text = path1.read_text(encoding="utf-8")
+        before, links, after = mp._split_followup(text)
+        self.assertEqual(links, ["FLMR-v2"])
+        path1.write_text(
+            mp._rebuild_followup(before, links + ["Gone Note", "FLMR v2"], after),
+            encoding="utf-8")
+        mp.invalidate_papers_cache()
+
+        touched = mp.cleanup_after_deletion(2, "Gone Note", self.papers,
+                                            deleted_file_stem="Gone-Note")
+
+        self.assertEqual(touched, [1])
+        body = self.read(1)["body"]
+        self.assertNotIn("[[Gone Note]]", body)
+        self.assertNotIn("[[Gone-Note]]", body)
+        self.assertIn("[[FLMR-v2]]", body)          # unrelated edge survives
+
+
 class YearCoercionTest(unittest.TestCase):
     """One hand-written `year: 2023a` killed paper_index_stats for the vault."""
 

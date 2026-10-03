@@ -491,6 +491,7 @@ async def handle_paper_remove(params: dict) -> str:
 
     title = paper.get("title", "Unknown")
     short_name = paper.get("short_name", "")
+    file_stem = Path(paper.get("file", "")).stem if paper.get("file") else ""
     # File first: if it cannot be deleted the index is left alone, so the two
     # never disagree about whether the paper exists.
     if not delete_paper_file(input_data.paper_id):
@@ -501,7 +502,8 @@ async def handle_paper_remove(params: dict) -> str:
     # Then the references it left behind — other papers keep `relations` entries
     # naming its id and `## 后续引用` links naming its short_name, which would
     # otherwise become unknown_target errors and Obsidian ghost nodes.
-    rewritten = cleanup_after_deletion(input_data.paper_id, short_name)
+    rewritten = cleanup_after_deletion(input_data.paper_id, short_name,
+                                       deleted_file_stem=file_stem)
     # A dead vector index must not fail a deletion that already happened on disk.
     warnings = []
     try:

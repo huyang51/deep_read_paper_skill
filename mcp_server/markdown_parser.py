@@ -436,6 +436,20 @@ def _write_paper(path: Path, metadata: dict, body: str) -> None:
         f.write(text)
 
 
+def _link_text(paper: dict) -> str:
+    """The text a ``[[wikilink]]`` to this paper must use to resolve in Obsidian.
+
+    Wikilinks match the *file stem*, not the short name: ``_make_safe_filename``
+    collapses whitespace to ``-``, so short_name ``FLMR v2`` lives in
+    ``FLMR-v2.md`` and a ``[[FLMR v2]]`` link only draws a ghost node in the
+    graph. Falls back to the short name when the file field is absent.
+    """
+    f = paper.get("file", "")
+    if f:
+        return Path(f).stem
+    return paper.get("short_name", "")
+
+
 def _split_followup(body: str) -> tuple[str, list[str], str]:
     """Split a body into (before, followup_links, after) around FOLLOWUP_HEADER."""
     if FOLLOWUP_HEADER not in body:
@@ -564,21 +578,29 @@ def sync_graph_edges(paper: dict, papers_dir: Path = None) -> dict:
         papers_dir = PAPERS_DIR
 
     index = relation_index(get_all_papers(papers_dir))
-    by_short = {p.get("short_name", ""): pid for pid, p in index.items() if p.get("short_name")}
-    by_short.update({p.get("title", ""): pid for pid, p in index.items() if p.get("title")})
+    # A link written under any of the three forms resolves: the file stem
+    # (canonical), the short name and the title (legacy, from older vaults).
+    by_short: dict[str, int] = {}
+    for pid, p in index.items():
+        for label in (_link_text(p), p.get("short_name", ""), p.get("title", "")):
+            if label:
+                by_short.setdefault(label, pid)
 
     # ── desired state ────────────────────────────────────────────────────
     wanted: dict[int, set[str]] = {}
+    wanted_ids: dict[int, set] = {}
     declared: dict[tuple[int, int], dict] = {}
     for pid, p in index.items():
         for e in relations_of(p):
             declared[(pid, e["target"])] = e
-            other_short = index.get(e["target"], {}).get("short_name", "")
-            self_short = p.get("short_name", "")
-            if e["direction"] == "successor" and other_short:
-                wanted.setdefault(pid, set()).add(other_short)      # self is earlier
-            elif e["direction"] == "predecessor" and self_short:
-                wanted.setdefault(e["target"], set()).add(self_short)  # other is earlier
+            other_link = _link_text(index.get(e["target"], {}))
+            self_link = _link_text(p)
+            if e["direction"] == "successor" and other_link:
+                wanted.setdefault(pid, set()).add(other_link)      # self is earlier
+                wanted_ids.setdefault(pid, set()).add(e["target"])
+            elif e["direction"] == "predecessor" and self_link:
+                wanted.setdefault(e["target"], set()).add(self_link)  # other is earlier
+                wanted_ids.setdefault(e["target"], set()).add(pid)
 
     # ── apply ────────────────────────────────────────────────────────────
     # Visit every paper that declares something, not only the ones that want an
@@ -601,9 +623,9 @@ def sync_graph_edges(paper: dict, papers_dir: Path = None) -> dict:
             tid = by_short.get(link)
             rel = declared.get((pid, tid)) if tid is not None else None
             if rel is None or link in want:
-                keep.append(link)          # legacy link, or still correct
+                keep.append(link)          # legacy link, or already canonical
             else:
-                moved.append((pid, link))
+                moved.append((pid, link))  # declared, and this text is not wanted
         links = sorted(set(keep) | want)
         if links != sorted(set(existing)):
             if links != existing:
@@ -706,15 +728,19 @@ def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
 
 
 def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
-                           papers_dir: Path = None) -> list:
+                           papers_dir: Path = None,
+                           deleted_file_stem: str = "") -> list:
     """Strip every reference to a just-deleted paper from the papers that remain.
 
     deleting the note does not delete the references to it: the other papers keep
     ``relations`` entries naming its id, the ``related_papers`` projection, and
-    ``## 后续引用`` links naming its short_name. Left alone those become
-    ``unknown_target`` errors in tools/verify_graph_arrows.py and ghost nodes in
-    the Obsidian graph, and an edge the deleted paper used to *own* simply
-    disappears with no record anywhere.
+    ``## 后续引用`` links naming it. Left alone those become ``unknown_target``
+    errors in tools/verify_graph_arrows.py and ghost nodes in the Obsidian graph,
+    and an edge the deleted paper used to *own* simply disappears with no record
+    anywhere.
+
+    Links may name the paper either by its file stem (the canonical link text)
+    or by its short name (what older vaults wrote), so both are matched.
 
     Graph edges are repaired here rather than by sync_graph_edges(), which is
     deliberately conservative: it only removes a link when a *declaration* points
@@ -727,6 +753,7 @@ def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
         papers_dir = PAPERS_DIR
 
     deleted_id = coerce_id(deleted_id)
+    gone_links = {s for s in (deleted_short_name, deleted_file_stem) if s}
     touched = []
     for paper in get_all_papers(papers_dir):
         pid = coerce_id(paper.get("id"))
@@ -746,8 +773,8 @@ def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
             continue
         body = paper.get("body", "")
         before, links, after = _split_followup(body)
-        kept_links = ([l for l in links if l != deleted_short_name]
-                      if deleted_short_name else links)
+        kept_links = ([l for l in links if l not in gone_links]
+                      if gone_links else links)
 
         if (len(kept_entries) == len(entries) and len(kept_legacy) == len(legacy)
                 and kept_links == links):
