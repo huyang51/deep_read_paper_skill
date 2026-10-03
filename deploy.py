@@ -12,6 +12,9 @@ What it does:
      (`output/.claude-settings.json`) to `<project_dir>/.claude/settings.json`.
   4. Prints the `claude mcp add --scope user` command that registers the MCP
      server, and with `--register` runs it.
+  5. Checks that the repo sits in a skills discovery path
+     (~/.claude/skills/ or <project_dir>/.claude/skills/) — anywhere else and
+     SKILL.md never triggers, no matter how correct the rest of the install is.
 
 Why the MCP server is no longer deployed as `<project_dir>/.mcp.json`: a
 project-scoped server is gated behind a one-time approval that only the user
@@ -264,6 +267,7 @@ def generate_config(register: bool = False):
     print()
     register_mcp_server(name, skill_dir, python_cmd, register)
     print()
+    check_skill_discovery(project_dir)
     print("=" * 55)
 
 
@@ -447,6 +451,58 @@ def register_mcp_server(name: str, skill_dir: str, python_cmd: str, run_it: bool
     else:
         print(f"  [WARN] claude mcp add 返回 {proc.returncode}: {out}")
         print("         若提示已存在，先 claude mcp remove --scope user " + name)
+
+
+def skill_installed_where() -> Path:
+    """The skills directory Claude Code should discover this skill from.
+
+    Personal skills live in ~/.claude/skills/<name>/ (SKILL.md is the marker);
+    project skills in <project>/.claude/skills/<name>/. Personal wins as the
+    recommendation: the skill reads papers wherever the user points it, not
+    just inside one project.
+    """
+    return Path.home() / ".claude" / "skills" / "deep_read_paper_skill"
+
+
+def check_skill_discovery(project_dir):
+    """Warn when the repo is somewhere Claude Code will never look for skills.
+
+    Every other deployment step (env, settings.json, MCP registration, hooks)
+    only makes the *tools* work. The skill itself — the thing that makes "读这
+    篇论文" trigger the whole workflow — is discovered in exactly two places,
+    and a repo cloned to ~/code/deep_read_paper_skill is in neither. Without
+    this check the user finishes a 7-step install into a skill that can never
+    fire, with no error anywhere.
+    """
+    try:
+        repo = SKILL_DIR.resolve()
+    except OSError:
+        return
+    bases = [Path.home() / ".claude" / "skills"]
+    if project_dir:
+        bases.append(Path(project_dir) / ".claude" / "skills")
+    for base in bases:
+        try:
+            repo.relative_to(base.resolve())
+            print(f"  [OK] Skill 位于发现路径内：{base}")
+            return
+        except (ValueError, OSError):
+            continue
+
+    target = skill_installed_where()
+    print("  [注意] 本仓库不在 Claude Code 的 skills 发现路径里 —— 上面所有步骤装完，")
+    print("         skill 也永远不会触发（触发词就找不到 SKILL.md）。")
+    print("         把它放进 skills 目录（个人级，所有项目可用）：")
+    print(f'           git clone <本仓库URL> "{target}"')
+    print("         （或直接移动现有克隆；移动后必须在新位置重跑：")
+    print("            python deploy.py --register  —— settings.json 与 MCP 注册都")
+    print("            记着旧路径，不重跑 MCP server 会指向已被删掉/过期的目录。）")
+    print("         项目级（仅当前项目可用）：")
+    if project_dir:
+        print(f'           移动到 "{Path(project_dir) / ".claude" / "skills" / "deep_read_paper_skill"}"')
+    else:
+        print("           <project>/.claude/skills/deep_read_paper_skill")
+    print()
 
 
 def main():

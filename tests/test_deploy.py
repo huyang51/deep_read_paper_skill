@@ -341,5 +341,58 @@ class PlaceholderSettingsTest(unittest.TestCase):
         self.assertIn("settings.example.json", buf.getvalue())
 
 
+class SkillDiscoveryTest(unittest.TestCase):
+    """A repo outside the skills discovery paths can never trigger.
+
+    Every other deploy step only makes the tools work; the skill itself fires
+    only when SKILL.md sits in ~/.claude/skills/ (or the project's). This was
+    the one step no error message ever covered: a 7-step install into a
+    non-discovered clone ended in a skill that silently never ran.
+    """
+
+    def run_check(self, skill_dir, project_dir=None):
+        with mock.patch.object(deploy, "SKILL_DIR", Path(skill_dir)):
+            return capture(deploy.check_skill_discovery, project_dir)
+
+    def test_repo_in_personal_skills_is_ok(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        repo = home / ".claude" / "skills" / "deep_read_paper_skill"
+        repo.mkdir(parents=True)
+        with mock.patch("deploy.Path") as MockPath:
+            MockPath.home.return_value = home
+            MockPath.side_effect = Path
+            out = self.run_check(repo)
+        self.assertIn("[OK]", out)
+
+    def test_repo_in_project_skills_is_ok(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = Path(tmp.name)
+        repo = project / ".claude" / "skills" / "deep_read_paper_skill"
+        repo.mkdir(parents=True)
+        out = self.run_check(repo, project_dir=str(project))
+        self.assertIn("[OK]", out)
+
+    def test_repo_outside_discovery_paths_warns_with_the_clone_target(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "code" / "deep_read_paper_skill"
+        repo.mkdir(parents=True)
+        out = self.run_check(repo, project_dir=str(Path(tmp.name) / "proj"))
+        self.assertIn("[注意]", out)
+        self.assertIn("永远不会触发", out)
+        self.assertIn(".claude", out)  # the guidance names the skills directory
+
+    def test_no_project_dir_still_warns(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "deep_read_paper_skill"
+        repo.mkdir(parents=True)
+        out = self.run_check(repo, project_dir=None)
+        self.assertIn("[注意]", out)
+
+
 if __name__ == "__main__":
     unittest.main()

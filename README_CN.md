@@ -104,18 +104,23 @@ graph TD
 | **Conda**（Anaconda / Miniconda） | 任意版本 | 本 skill **要求一个专用环境**（下称 `paper-kb`）——不要装进 base，也不要跟别的项目共用 |
 | **磁盘** | 约 3 GB | CPU 版 torch + 嵌入模型 + 依赖 |
 | **网络** | 首次运行需下载嵌入模型 | 默认模型 `paraphrase-multilingual-MiniLM-L12-v2` 约 470 MB，从 HuggingFace 拉取；国内网络请先设 `HF_ENDPOINT=https://hf-mirror.com`，否则会卡在下载 |
-| **Claude Code** | 启用 skills 功能 | |
+| **Claude Code** | 启用 skills 功能 | 且本仓库必须位于 skills 发现路径（`~/.claude/skills/` 等），见安装第 0 步 |
 | **Obsidian** | 可选 | 只用于知识图谱可视化 |
 
 > 依赖清单只有一个事实源：仓库根的 **`requirements.txt`**（装什么、为什么装，注释都写在里面）。
 
 ### 安装
 
+> **⚠️ 第 0 步，决定成败**：仓库必须放进 Claude Code 的 skills 发现路径——
+> 个人级 `~/.claude/skills/deep_read_paper_skill`（Windows 为 `%USERPROFILE%\.claude\skills\deep_read_paper_skill`），或项目级 `<project>/.claude/skills/deep_read_paper_skill`。
+> 克隆到别处，后面 7 步全部装完，skill 也**永远不会触发**——触发词找不到 SKILL.md，且没有任何报错。`deploy.py` 结尾会检测这一点并给出 [注意]。
+
 **一条命令（推荐）**——任意 Python ≥3.9 + PATH 里有 conda 即可：
 
 ```bash
-git clone https://github.com/huyang51/deep_read_paper_skill.git
-cd deep_read_paper_skill
+# 直接克隆进 skills 目录（个人级，所有项目可用）
+git clone https://github.com/huyang51/deep_read_paper_skill.git ~/.claude/skills/deep_read_paper_skill
+cd ~/.claude/skills/deep_read_paper_skill
 python bootstrap.py --vault D:/papers/knowledge-base --register
 ```
 
@@ -124,9 +129,11 @@ python bootstrap.py --vault D:/papers/knowledge-base --register
 下面的分步手动路径做的事与它完全相同：
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/huyang51/deep_read_paper_skill.git
-cd deep_read_paper_skill
+# 1. 克隆仓库 —— 必须放进 skills 目录，否则 skill 永不触发（见上面的第 0 步）
+git clone https://github.com/huyang51/deep_read_paper_skill.git ~/.claude/skills/deep_read_paper_skill
+cd ~/.claude/skills/deep_read_paper_skill
+#    Windows（cmd/PowerShell 把 ~ 换成 %USERPROFILE%）：
+#    git clone https://github.com/huyang51/deep_read_paper_skill.git "%USERPROFILE%\.claude\skills\deep_read_paper_skill"
 
 # 2. 创建并激活 skill 专用环境（每台机器只需做一次）
 conda create -n paper-kb python=3.10 -y
@@ -171,7 +178,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > **🔑 运行方式：本 skill 的一切都要用这个环境的 python 跑**
 > - **会话里手动敲的工具命令**（`python tools/migrate_relations.py`、`python tools/verify_graph_arrows.py`、`python tools/index_paper.py` …）命中的是当前 PATH 上的 python —— **先 `conda activate paper-kb` 再敲**，否则会用系统 Python 跑出 `ModuleNotFoundError`。
 > - **MCP server 与两个 hook 不需要激活**：`deploy.py` 已把 `python_cmd` 的绝对路径写死进 user 作用域的注册项里，以及 `.claude/settings.json`。
-> - **首次启动会下载嵌入模型**（约 470 MB，见上表），那一次慢是正常的；模型落盘后启动只读本地缓存（约 12 秒），不再联网。
+> - **首次索引类工具调用会下载嵌入模型**（约 470 MB，见上表）。下载发生在 MCP 握手**之后**——服务秒连，不会把连接超时挡死；那一次调用慢是正常的，模型落盘后只读本地缓存，不再联网。
 
 > **💡 为什么要用 Conda 环境**：
 > - 将 `chromadb` / `torch` / `sentence-transformers` / `PyMuPDF` 等依赖与系统 Python 及其他项目隔离
@@ -179,6 +186,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > - 换机器复现：`pip install -r requirements.txt` 一条命令装齐
 
 > **常见坑**：
+> - 仓库没放进 `~/.claude/skills/` → 一切正常装完但 skill 永不触发，无任何报错（`deploy.py` 结尾会检测并提示）
 > - 忘记 `conda activate paper-kb` → `pip install` 装到了别的 Python，或跑工具时命中系统 Python，报 `ModuleNotFoundError`
 > - `settings.json` 中 `python_cmd` 指向系统 Python 而非 skill 环境 → MCP server 与 hooks 启动即崩（`deploy.py` 的自检会 [WARN]）
 > - 没设 `HF_ENDPOINT` → 首次下载模型时卡住，MCP server 启动时像"死"了一样。模型一旦缓存到本地就不会再走这一步：server 会自己切到离线加载，跳过 HuggingFace 联网检查

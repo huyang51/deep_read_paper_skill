@@ -104,18 +104,23 @@ graph TD
 | **Conda** (Anaconda / Miniconda) | any | The skill **requires its own environment** (named `paper-kb` below) — not base, not a shared project env |
 | **Disk** | ~3 GB | CPU build of torch + embedding model + dependencies |
 | **Network** | Model download on first run | The default embedder `paraphrase-multilingual-MiniLM-L12-v2` is ~470 MB and comes from HuggingFace. Behind a slow/blocked connection set `HF_ENDPOINT=https://hf-mirror.com` or the first run hangs |
-| **Claude Code** | with skills enabled | |
+| **Claude Code** | with skills enabled | and this repo inside a skills discovery path (`~/.claude/skills/` etc.) — see Installation step 0 |
 | **Obsidian** | optional | Only for graph visualization |
 
 > One source of truth for dependencies: **`requirements.txt`** at the repo root — what is installed and why is explained there.
 
 ### Installation
 
+> **⚠️ Step 0, the one that decides success**: the repo must live inside a Claude Code skills discovery path —
+> personal `~/.claude/skills/deep_read_paper_skill` (Windows: `%USERPROFILE%\.claude\skills\deep_read_paper_skill`), or project `<project>/.claude/skills/deep_read_paper_skill`.
+> Cloned anywhere else, all 7 steps below complete "successfully" and the skill **still never triggers** — the trigger words can't find SKILL.md, and nothing reports an error. `deploy.py` checks this at the end and prints a notice if you got it wrong.
+
 **One command (recommended)** — with any Python ≥3.9 and conda on PATH:
 
 ```bash
-git clone https://github.com/huyang51/deep_read_paper_skill.git
-cd deep_read_paper_skill
+# Clone straight into the skills directory (personal — available in every project)
+git clone https://github.com/huyang51/deep_read_paper_skill.git ~/.claude/skills/deep_read_paper_skill
+cd ~/.claude/skills/deep_read_paper_skill
 python bootstrap.py --vault D:/papers/knowledge-base --register
 ```
 
@@ -124,9 +129,12 @@ python bootstrap.py --vault D:/papers/knowledge-base --register
 The step-by-step path below does exactly the same things by hand:
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/huyang51/deep_read_paper_skill.git
-cd deep_read_paper_skill
+# 1. Clone the repository — MUST be inside a skills directory, or the skill
+#    never triggers (see Step 0 above)
+git clone https://github.com/huyang51/deep_read_paper_skill.git ~/.claude/skills/deep_read_paper_skill
+cd ~/.claude/skills/deep_read_paper_skill
+#    Windows (cmd/PowerShell: replace ~ with %USERPROFILE%):
+#    git clone https://github.com/huyang51/deep_read_paper_skill.git "%USERPROFILE%\.claude\skills\deep_read_paper_skill"
 
 # 2. Create and activate the skill's own Conda environment (ONCE per machine)
 conda create -n paper-kb python=3.10 -y
@@ -174,7 +182,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > **🔑 How the skill is run: everything goes through that one environment**
 > - **Tool commands you type in a session** (`python tools/migrate_relations.py`, `python tools/verify_graph_arrows.py`, `python tools/index_paper.py`, …) hit whichever `python` is on PATH — so **`conda activate paper-kb` first**, otherwise they land on system Python and die with `ModuleNotFoundError`.
 > - **The MCP server and both hooks need no activation**: `deploy.py` bakes the absolute `python_cmd` path into the user-scope registration and into `.claude/settings.json`.
-> - **The first start downloads the embedding model** (~470 MB, see the table). That one start is slow; once the model is on disk a start only reads the local cache (~12s) and touches no network.
+> - **The first index-backed tool call downloads the embedding model** (~470 MB, see the table). The download happens *after* the MCP handshake — the server connects instantly instead of dying in the client's connect timeout. That one call is slow; once the model is on disk nothing touches the network again.
 
 > **💡 Why a Conda environment**:
 > - Isolates `chromadb` / `torch` / `sentence-transformers` / `PyMuPDF` from your system Python and other projects
@@ -182,6 +190,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > - Reproducible across machines: one `pip install -r requirements.txt`
 
 > **Common pitfalls**:
+> - Repo not inside `~/.claude/skills/` → everything installs cleanly but the skill never triggers, with no error anywhere (`deploy.py` checks this at the end)
 > - Forgot `conda activate paper-kb` → `pip install` lands in another Python, or tool commands hit system Python and fail with `ModuleNotFoundError`
 > - `python_cmd` points to system Python instead of the skill's env → MCP server and hooks die at startup (deploy's preflight prints `[WARN]`)
 > - No `HF_ENDPOINT` set → the first model download stalls and a starting MCP server looks dead. Once the model is cached this step is gone for good: the server switches itself to offline loading and skips the HuggingFace hub check
