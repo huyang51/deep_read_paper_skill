@@ -21,9 +21,11 @@ Run from repo root:  python -m unittest discover -s tests -v
 import asyncio
 import io
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -298,6 +300,43 @@ class DispatcherTest(unittest.TestCase):
     def test_unknown_method_is_not_silently_ignored(self):
         response = asyncio.run(server.handle_request("tools/bogus", 7, {}))
         self.assertEqual(response["error"]["code"], -32601)
+
+
+class ErrorSanitizationTest(unittest.TestCase):
+    """Tool errors land in the session transcript, which users share far more
+    freely than a server log — the machine's absolute paths must not ride
+    along in FileNotFoundError text or in our own error strings."""
+
+    CALL = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "paper_search", "arguments": {"query": "x"}}}
+
+    def _drive_with_handler(self, handler):
+        replies = drive(conversation(self.CALL))
+        return replies
+
+    def test_exception_paths_are_masked(self):
+        from mcp_server import config
+        leak = str(Path(config.VAULT_DIR) / "papers" / "x.md")
+        home_leak = str(Path.home() / "secret")
+
+        async def broken(args):
+            raise FileNotFoundError(f"[Errno 2] No such file: {leak} ({home_leak})")
+
+        with mock.patch.dict(server.TOOL_DISPATCH,
+                             {"paper_search": broken}):
+            replies = drive(conversation(self.CALL))
+
+        message = replies[1]["error"]["message"]
+        self.assertNotIn(str(config.VAULT_DIR), message)
+        self.assertNotIn(home_leak, message)
+        self.assertIn("<vault>", message)
+        self.assertIn("~" + os.sep + "secret", message)
+
+    def test_short_roots_are_never_blanked(self):
+        """A degenerate root (drive letter like C:\) must not be replaced —
+        that would mangle every message containing that two-char string."""
+        text = server._sanitize_error("路径 C:\\ 没问题，C:\\x 也不动")
+        self.assertIn("C:\\", text)
 
 
 if __name__ == "__main__":

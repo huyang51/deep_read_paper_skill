@@ -101,6 +101,31 @@ def get_store() -> ChromaStore:
         _store = ChromaStore()
     return _store
 
+
+def _sanitize_error(text: str) -> str:
+    """Mask local absolute paths in error text sent back to the client.
+
+    Exception strings carry file paths (FileNotFoundError prints the whole
+    path; our own messages name the vault), and every tool error lands in the
+    session transcript — which users share, screenshot and paste far more
+    freely than a server-side log. The machine layout is nobody else's
+    business, and masking costs nothing: replies only ever mention these
+    roots when something went wrong around them. Longest first, so a vault
+    under the home directory is masked as <vault>, not as ~/….
+    """
+    candidates = []
+    for root, tag in ((config.VAULT_DIR, "<vault>"),
+                      (config.SKILL_DIR, "<skill>"),
+                      (Path.home(), "~")):
+        try:
+            candidates.append((str(Path(root).resolve()), tag))
+        except OSError:
+            continue
+    for path_str, tag in sorted(candidates, key=lambda p: len(p[0]), reverse=True):
+        if len(path_str) > 3:  # never replace short strings like "C:\" wholesale
+            text = text.replace(path_str, tag)
+    return text
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # IMPORTANT: The TOOLS list below must be manually kept in sync with the Pydantic
 # models in models.py (SearchInput, PaperIndexInput, etc.). When adding/changing
@@ -602,7 +627,8 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
-                    "error": {"code": -32000, "message": f"知识库不可用：{STARTUP_ERROR}"}
+                    "error": {"code": -32000,
+                              "message": _sanitize_error(f"知识库不可用：{STARTUP_ERROR}")}
                 }
         handler = TOOL_DISPATCH.get(tool_name)
         if not handler:
@@ -625,7 +651,7 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {"code": -32000, "message": str(e)}
+                "error": {"code": -32000, "message": _sanitize_error(str(e))}
             }
     elif method.startswith("notifications/"):
         # Notifications get no reply, ever. Matching the prefix rather than one
