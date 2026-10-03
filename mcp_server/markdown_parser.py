@@ -1,5 +1,7 @@
+import contextlib
 import os
 import re
+import time
 import frontmatter
 from datetime import date
 from pathlib import Path
@@ -180,6 +182,56 @@ def get_next_id(papers_dir: Path = None) -> int:
     return max(ids) + 1 if ids else 1
 
 
+@contextlib.contextmanager
+def _vault_write_lock(papers_dir: Path, timeout: float = 30.0):
+    """Cross-process lock over read-then-write vault operations.
+
+    The race this closes: two Claude Code sessions index papers at the same
+    time, both run get_next_id's "scan the directory, take max+1" against the
+    same snapshot, both pick id 7 — one paper's note silently lands on top of
+    the other's in relations, wikilinks and the index. Allocation and write
+    must therefore happen under one lock file in the vault. Advisory locks:
+    msvcrt.locking on Windows, fcntl.flock elsewhere. Note fcntl locks are
+    per-process, so this guards cross-process races, not same-process threads
+    (Python's GIL + the short critical section make those benign).
+
+    The lock file is `.paper-kb.lock` — deliberately not *.md, so no paper
+    glob ever mistakes it for a note.
+    """
+    lock_path = papers_dir / ".paper-kb.lock"
+    with open(lock_path, "a+") as f:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"获取知识库写入锁超时（{timeout:.0f}s）：另一个会话可能正在"
+                        f"索引。锁文件：{lock_path} —— 若确认无并发会话，可删除它重试。")
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass  # already released or handle closed — nothing to recover
+
+
 def _make_safe_filename(name: str) -> str:
     """Convert a short name or title to a safe filename fragment. Preserves case.
     Falls back to 'untitled' if the name consists entirely of punctuation/symbols."""
@@ -194,12 +246,24 @@ def create_paper_file(paper_data: dict, papers_dir: Path = None) -> Path:
     Idempotent: if a paper with the same ID already exists, the existing file is
     overwritten (updated) rather than creating a duplicate file. A filename that
     belongs to a *different* paper is a hard error, never an overwrite.
+
+    When the caller supplies no id, allocation and write run under the vault
+    write lock: two sessions indexing concurrently must not both observe the
+    same max+1 and hand two papers the same id.
     """
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
     papers_dir.mkdir(parents=True, exist_ok=True)
 
+    if coerce_id(paper_data.get("id")) is not None:
+        # Explicit id: caller-owned, no allocation to race over.
+        return _create_paper_file_impl(paper_data, papers_dir)
+    with _vault_write_lock(papers_dir):
+        return _create_paper_file_impl(paper_data, papers_dir)
+
+
+def _create_paper_file_impl(paper_data: dict, papers_dir: Path) -> Path:
     paper_id = coerce_id(paper_data.get("id"))
     # The previous version of this file: read it BEFORE the idempotency delete
     # below, because this whitelist is a full rewrite and anything the caller
