@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 from mcp_server.config import PAPERS_DIR
 from mcp_server.relations import (
+    coerce_id as _relations_coerce_id,
     derive_relations, inverse_direction, merge_relation, normalize_relations,
     project_related_papers, relation_index, relations_of,
 )
@@ -104,24 +105,9 @@ def invalidate_papers_cache():
 
 
 def coerce_id(value) -> Optional[int]:
-    """Frontmatter ``id`` as an int, or None when it is not a usable id.
-
-    YAML decides the type from how it was written, and these files are routinely
-    hand-edited: ``id: 7`` is an int, ``id: "7"`` is a str. Comparing the two
-    misses, and mixing them in ``max()`` raises TypeError — so everything that
-    reads an id goes through here first. ``True`` is rejected explicitly because
-    ``isinstance(True, int)`` is true in Python and ``id: yes`` would otherwise
-    silently become paper 1.
-    """
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        text = value.strip()
-        if text.lstrip("-").isdigit():
-            return int(text)
-    return None
+    """Re-exported from relations (the canonical home); kept here because every
+    parser caller and half the tools import it by this name from this module."""
+    return _relations_coerce_id(value)
 
 
 def get_paper_by_id(paper_id: int, papers_dir: Path = None) -> Optional[dict]:

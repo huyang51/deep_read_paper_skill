@@ -22,7 +22,34 @@ read the old field keep working.
 
 Pure functions only — no file I/O, so every rule below is unit-testable.
 """
-from typing import Iterable
+from typing import Iterable, Optional
+
+RELATION_TYPES = ("method_similar", "problem_related", "complementary", "evolutionary")
+
+
+def coerce_id(value) -> Optional[int]:
+    """Frontmatter ``id`` as an int, or None when it is not a usable id.
+
+    YAML decides the type from how it was written, and these files are routinely
+    hand-edited: ``id: 7`` is an int, ``id: "7"`` is a str. Comparing the two
+    misses, and mixing them in ``max()`` raises TypeError — so everything that
+    reads an id goes through here first. ``True`` is rejected explicitly because
+    ``isinstance(True, int)`` is true in Python and ``id: yes`` would otherwise
+    silently become paper 1.
+
+    Lives here rather than in markdown_parser so the validators can use it
+    without an import cycle (markdown_parser already imports this module).
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lstrip("-").isdigit():
+            return int(text)
+    return None
+
 
 RELATION_TYPES = ("method_similar", "problem_related", "complementary", "evolutionary")
 
@@ -200,7 +227,7 @@ def validate_relations(papers: Iterable[dict]) -> list[dict]:
         for e in entries:
             target_id = e["target"]
             other = index.get(target_id)
-            if target_id == paper.get("id"):
+            if target_id == coerce_id(paper.get("id")):
                 add("self_reference", ERROR, paper,
                     f"[{short}] 把自身列为关联论文", target_id)
                 continue
@@ -235,7 +262,8 @@ def validate_relations(papers: Iterable[dict]) -> list[dict]:
                 pass
 
             # ---- the invariant ----
-            back = next((r for r in relations_of(other) if r["target"] == paper.get("id")), None)
+            back = next((r for r in relations_of(other)
+                         if r["target"] == coerce_id(paper.get("id"))), None)
             if back is None:
                 add("missing_reciprocal", ERROR, paper,
                     f"[{short}] 声明 → [{other.get('short_name')}]（{e['type']}/"

@@ -213,6 +213,34 @@ class ArrowCheckTest(unittest.TestCase):
         issues = V.verify_arrows([x, y])
         self.assertFalse([i for i in issues if "❌" in i], issues)
 
+    def test_relevance_accepts_the_same_evidence_as_the_validator(self):
+        """口径统一：relations 校验器的 no_justification 用 _mentions（正文
+        任何位置出现 short_name 或标题），verify_relevance 曾用更严的
+        段落级匹配——同一对关系一边通过一边报错。"""
+        a = self._paper(1, 2019, body="本文与 Title P2 的问题设定同源。",
+                        related=[2])
+        b = self._paper(2, 2020)
+        self.assertEqual(V.verify_relevance([a, b]), [])
+
+    def test_relevance_accepts_a_stem_form_followup_link(self):
+        """机器写入的边可能用文件 stem 而非 short_name（空格折叠）。"""
+        a = self._paper(1, 2019, body="正文。\n\n## 后续引用\n\n- [[P-2-v2]]\n",
+                        related=[2])
+        b = self._paper(2, 2020)
+        b["short_name"] = "P 2 v2"
+        b["file"] = "papers/P-2-v2.md"
+        self.assertEqual(V.verify_relevance([a, b]), [])
+
+    def test_related_ids_are_matched_through_coerce_id(self):
+        """hand-written `related_papers: ["2"]`（字符串形式）与 int id 的
+        纯 == 比较永远 miss，检查静默落空。"""
+        a = self._paper(1, 2019, body="正文。\n\n## 后续引用\n\n- [[P2]]\n",
+                        related=["2"])
+        b = self._paper(2, 2020, body="与 **P1** 相关。", related=[1])
+        self.assertEqual(V.verify_relevance([a, b]), [])
+        issues = V.verify_arrows([a, b])          # newer side has bold ref; no ❌
+        self.assertFalse([i for i in issues if "❌" in i], issues)
+
 
 class TempVaultCase(unittest.TestCase):
     """Shared temp-vault fixture (no tests of its own).

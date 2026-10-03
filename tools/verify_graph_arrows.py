@@ -26,8 +26,9 @@ from typing import Optional
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
-from mcp_server.markdown_parser import get_all_papers
-from mcp_server.relations import ERROR, relations_of, validate_relations
+from mcp_server.markdown_parser import _split_followup, get_all_papers
+from mcp_server.relations import ERROR, _mentions, relations_of, validate_relations
+from mcp_server.markdown_parser import coerce_id
 
 
 def extract_year(paper: dict) -> Optional[int]:
@@ -53,18 +54,40 @@ def get_body_bold_refs(paper: dict, target_short_name: str) -> int:
     return len(re.findall(rf"\*\*{re.escape(target_short_name)}\*\*", body))
 
 
+def _by_id(papers: list[dict]) -> dict:
+    """papers indexed by coerced id — a quoted or spaced hand-written ``id:``
+    used to make every lookup silently miss and the checks report nothing."""
+    index = {}
+    for p in papers:
+        pid = coerce_id(p.get("id"))
+        if pid is not None:
+            index[pid] = p
+    return index
+
+
+def _edge_justified(paper: dict, related: dict) -> bool:
+    """Does the body justify this pair? Same standard as the structured
+    validator's ``no_justification`` warning (relations._mentions: short_name
+    or title anywhere in the body), plus the machine-written followup link —
+    which may name the file stem rather than the short name. The two validators
+    used to disagree here: one passed an entry the other flagged."""
+    if _mentions(paper, related):
+        return True
+    _, links, _ = _split_followup(paper.get("body", ""))
+    return related.get("short_name", "") in links or related.get("file", "") \
+        and Path(related["file"]).stem in links
+
+
 def verify_relevance(papers: list[dict]) -> list[str]:
-    """Check that every related_papers entry has been validated by paper_find_related.
+    """Check that every related_papers entry has body justification.
 
-    Specifically: for every (A, B) in related_papers, check that either:
-    - A.body or B.body contains a clear relation justification mentioning both papers, OR
-    - The shared keywords field documents the relevance
-
-    Since we can't re-call paper_find_related here (it requires running MCP),
-    we check for a body-level "## 与前人工作的关系" or "## 后续引用" section
-    that mentions the related paper.
+    The evidence bar is deliberately identical to validate_relations'
+    ``no_justification`` check (relations._mentions) plus the followup link,
+    so a vault cannot pass one validator and fail the other over the same
+    pair — they used to disagree on section-scoped matching.
     """
     issues = []
+    index = _by_id(papers)
 
     for paper in papers:
         cur_short = paper.get("short_name", "")
@@ -72,42 +95,22 @@ def verify_relevance(papers: list[dict]) -> list[str]:
         if not related_ids:
             continue
 
-        body = paper.get("body", "")
-
         for rel_id in related_ids:
-            related = next((p for p in papers if p.get("id") == rel_id), None)
-            if not related:
+            related = index.get(coerce_id(rel_id))
+            if related is None:
                 continue
+
+            if _edge_justified(paper, related):
+                continue
+
             rel_short = related.get("short_name", "")
-
-            # Check if this paper's body mentions the related paper in a
-            # relation context (either ## 与前人工作的关系 or ## 后续引用).
-            # We look for the related paper's short_name in bold or wikilink form
-            # within these specific sections.
-            has_relation_mention = False
-
-            # Check "## 与前人工作的关系" section
-            if "## 与前人工作的关系" in body:
-                section = body.split("## 与前人工作的关系", 1)[1]
-                if "## " in section:  # Until next section
-                    section = section.split("## ", 1)[0]
-                if rel_short in section:
-                    has_relation_mention = True
-
-            # Check "## 后续引用" section
-            if not has_relation_mention and "## 后续引用" in body:
-                section = body.split("## 后续引用", 1)[1]
-                if f"[[{rel_short}]]" in section:
-                    has_relation_mention = True
-
-            if not has_relation_mention:
-                issues.append(
-                    f"❌ [{cur_short}] lists [{rel_short}] as related but has NO "
-                    f"justification in body (no mention in '## 与前人工作的关系' "
-                    f"or '## 后续引用' section). "
-                    f"Use paper_find_related to find candidates, then add a "
-                    f"justification in the paper body."
-                )
+            issues.append(
+                f"❌ [{cur_short}] lists [{rel_short}] as related but has NO "
+                f"justification: the body never mentions it (by short name or "
+                f"title) and there is no [[link]] under ## 后续引用. "
+                f"Use paper_find_related to find candidates, then add a "
+                f"justification in the paper body."
+            )
 
     return issues
 
@@ -123,8 +126,9 @@ def verify_arrows(papers: list[dict]) -> list[str]:
     """
     issues = []
     declared = set()
+    index = _by_id(papers)
     for paper in papers:
-        pid = paper.get("id")
+        pid = coerce_id(paper.get("id"))
         for entry in relations_of(paper):
             declared.add((pid, entry["target"]))
 
@@ -135,12 +139,8 @@ def verify_arrows(papers: list[dict]) -> list[str]:
             continue
 
         for rel_id in related_ids:
-            # Find related paper by id
-            related = next(
-                (p for p in papers if p.get("id") == rel_id),
-                None,
-            )
-            if not related:
+            related = index.get(coerce_id(rel_id))
+            if related is None:
                 continue
 
             rel_year = extract_year(related)
@@ -150,8 +150,8 @@ def verify_arrows(papers: list[dict]) -> list[str]:
             if new_year is None or rel_year is None:
                 continue  # Skip if we can't determine order
 
-            pair_declared = ((paper.get("id"), rel_id) in declared
-                             or (rel_id, paper.get("id")) in declared)
+            pair_declared = ((coerce_id(paper.get("id")), coerce_id(rel_id)) in declared
+                             or (coerce_id(rel_id), coerce_id(paper.get("id"))) in declared)
             body = paper.get("body", "")
 
             if new_year < rel_year:
