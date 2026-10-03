@@ -55,11 +55,19 @@ def build_relation_graph() -> dict:
 # Simple TTL cache for get_all_papers to avoid re-parsing every .md file on each call.
 # Cache is keyed by (papers_dir, mtime) so changing vault_dir via PAPER_KB_VAULT_DIR
 # environment variable does not serve stale entries from the previous vault.
-_all_papers_cache: dict = {"papers_dir": None, "data": None, "mtime": 0.0, "ttl": 5.0}
+_all_papers_cache: dict = {"papers_dir": None, "data": None, "mtime": 0.0, "ttl": 5.0,
+                           "errors": []}
 
 
 def get_all_papers(papers_dir: Path = None) -> list[dict]:
-    """Get all papers as list of metadata dicts. Results are cached with a short TTL."""
+    """Get all papers as list of metadata dicts. Results are cached with a short TTL.
+
+    A file whose frontmatter does not parse (a stray tab, an unclosed quote)
+    used to raise straight through this scan — and since every tool and the
+    watcher go through it, one hand-edited note took the whole vault down.
+    Now the file is skipped and the reason is kept in the scan cache, for
+    get_scan_errors() and index_all_papers' skipped channel to report.
+    """
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
@@ -73,11 +81,17 @@ def get_all_papers(papers_dir: Path = None) -> list[dict]:
         return _all_papers_cache["data"]
 
     papers = []
+    _all_papers_cache["errors"] = []
     if not papers_dir.exists():
         return papers
 
     for paper_file in sorted(papers_dir.glob("*.md")):
-        parsed = parse_paper(paper_file)
+        try:
+            parsed = parse_paper(paper_file)
+        except Exception as e:
+            _all_papers_cache["errors"].append(
+                f"{paper_file.name}: {type(e).__name__}: {e}")
+            continue
         if parsed:
             papers.append(parsed)
 
@@ -87,11 +101,22 @@ def get_all_papers(papers_dir: Path = None) -> list[dict]:
     return papers
 
 
+def get_scan_errors() -> list:
+    """Per-file parse failures from the most recent get_all_papers scan.
+
+    Empty both when the scan was clean and when it hit the TTL cache — errors
+    live in the same cache as the data they belong to, so a fresh cache hit
+    keeps reporting the errors of the scan that populated it.
+    """
+    return list(_all_papers_cache.get("errors") or [])
+
+
 def invalidate_papers_cache():
     """Invalidate the papers cache (call after file changes)."""
     _all_papers_cache["data"] = None
     _all_papers_cache["mtime"] = 0.0
     _all_papers_cache["papers_dir"] = None
+    _all_papers_cache["errors"] = []
 
 
 def coerce_id(value) -> Optional[int]:

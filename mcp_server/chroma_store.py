@@ -5,7 +5,9 @@ from chromadb.utils import embedding_functions
 from pathlib import Path
 from mcp_server.config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_MODEL
 from mcp_server.hf_offline import prefer_cached_model
-from mcp_server.markdown_parser import coerce_id, get_all_papers, parse_paper
+from mcp_server.markdown_parser import (
+    coerce_id, get_all_papers, get_scan_errors, parse_paper,
+)
 
 
 def _as_year(value):
@@ -105,11 +107,23 @@ class ChromaStore:
             self.init_collection()
 
         papers = get_all_papers()
+        scan_errors = get_scan_errors()
+        if scan_errors:
+            logging.getLogger("paper_kb_mcp").warning(
+                "以下论文文件解析失败，已跳过（修复 frontmatter 后会随下次扫描自动入索引）："
+                + " | ".join(scan_errors)
+            )
         if not papers:
             # An emptied vault still owes an emptied index: a bare return here
             # left every existing entry in place, so search kept answering for
             # papers whose notes were all gone. The orphan sweep below runs on
             # the empty `ids` list — which is exactly the right deletion set.
+            # But "every file failed to parse" is not an emptied vault — it is
+            # a vault that is temporarily unreadable, and wiping the index on
+            # its behalf would destroy months of vectors over a typo. Only the
+            # truly-empty scan (no papers, no parse failures) clears.
+            if scan_errors:
+                return
             existing = self.collection.get()
             if existing["ids"]:
                 self.collection.delete(ids=list(existing["ids"]))
