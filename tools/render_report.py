@@ -476,11 +476,6 @@ def rewrite_tables(html_text):
     return _TABLE_RE.sub(fix_table, html_text)
 
 
-# kept for callers/tests that used the previous names
-wrap_tables = rewrite_tables
-upgrade_tables = rewrite_tables
-
-
 # --------------------------------------------------------------------------
 # ascii summary box -> styled card
 # --------------------------------------------------------------------------

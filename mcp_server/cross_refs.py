@@ -1,7 +1,7 @@
 import re
 from typing import Optional
 from mcp_server.markdown_parser import (
-    coerce_id, get_paper_by_id, extract_wikilinks, build_relation_graph, get_all_papers,
+    coerce_id, get_paper_by_id, extract_wikilinks, get_all_papers,
 )
 from mcp_server.relations import derive_direction, infer_type, relation_index, relations_of
 
@@ -116,9 +116,3 @@ def find_related(paper_id: int, relation_type: Optional[str] = None) -> list[dic
 
     results.sort(key=lambda r: (_SOURCE_RANK.get(r["source"], 9), r["paper_id"]))
     return results
-
-
-def _determine_relation_type(paper_a: dict, paper_b: dict) -> str:
-    """Deprecated alias kept for callers outside this module (see
-    mcp_server.relations.infer_type for why declared types beat this)."""
-    return infer_type(paper_a, paper_b)

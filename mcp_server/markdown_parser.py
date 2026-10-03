@@ -36,24 +36,6 @@ def extract_wikilinks(content: str) -> list[str]:
     return re.findall(r'\[\[([^\]]+)\]\]', content)
 
 
-def build_relation_graph() -> dict:
-    """Scan all papers, build {paper_id: [related_paper_ids]} graph."""
-    graph = {}
-    if not PAPERS_DIR.exists():
-        return graph
-
-    for paper_file in PAPERS_DIR.glob("*.md"):
-        post = frontmatter.load(str(paper_file))
-        paper_id = post.metadata.get("id")
-        if paper_id is None:
-            continue
-        related = post.metadata.get("related_papers", [])
-        if isinstance(related, list):
-            graph[paper_id] = related
-
-    return graph
-
-
 # Simple TTL cache for get_all_papers to avoid re-parsing every .md file on each call.
 # Cache is keyed by (papers_dir, mtime) so changing vault_dir via PAPER_KB_VAULT_DIR
 # environment variable does not serve stale entries from the previous vault.
@@ -728,32 +710,6 @@ def sync_paper_relations(paper: dict, papers_dir: Path = None) -> dict:
         "edges_updated": edges["updated"],
         "edges_moved": edges["moved"],
     }
-
-
-def add_backlinks_to_referenced_papers(new_paper_id: int, new_short_name: str,
-                                       related_paper_ids: list[int],
-                                       papers_dir: Path = None,
-                                       new_paper_year: int = None) -> list[int]:
-    """Deprecated legacy wrapper — use sync_paper_relations().
-
-    Kept because older callers pass a flat id list with no semantics. Direction
-    is derived from years (the best available guess) and the legacy
-    ``related_papers`` entries are migrated on the fly, so the outcome is the
-    same as a declared relation whose direction came from publication order.
-    """
-    if papers_dir is None:
-        papers_dir = PAPERS_DIR
-
-    paper = get_paper_by_id(new_paper_id, papers_dir)
-    if not paper:
-        return []
-
-    index = relation_index(get_all_papers(papers_dir))
-    entries, _ = derive_relations(paper, index)
-    if not entries:
-        return []
-    paper = dict(paper, relations=entries)
-    return sync_relations(paper, papers_dir)["updated"]
 
 
 def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
