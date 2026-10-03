@@ -279,7 +279,10 @@ _IMG_P = re.compile(r"<p>\s*<img\b([^>]*)>\s*</p>")
 _ATTR_SRC = re.compile(r'src="([^"]+)"')
 _ATTR_ALT = re.compile(r'alt="([^"]*)"')
 # pangu char classes — ASCII escapes only, never literal glyphs here.
-_CJK = "\u2e80-\u312f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+# The CJK side EXCLUDES the punctuation rows (U+3000-3002 ideographic space/、/。
+# and U+3008-3011 〈〉《》【】): a thin space after a 顿号 or before a 句号 is no
+# typesetting convention in any script. Full-width rows (U+FF00+) were never in.
+_CJK = "\u2e80-\u2fff\u3003-\u3007\u3012-\u312f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
 _LAT = "A-Za-z0-9\u03b1-\u03c9\u2032\u2019$%\u2208\u22c8\u2248\u2265\u2264\u00d7\u00f7\u2211"
 _P2A = re.compile("([" + _CJK + "])(?=[" + _LAT + "])")
 _P2B = re.compile("(?<=[" + _LAT + "])([" + _CJK + "])")
@@ -577,6 +580,20 @@ def github_alerts(html_text):
     return _ALERT.sub(rep, _BLOCKQUOTE.sub(split_merged, html_text))
 
 
+# The report template also writes light-weight callouts as a bare blockquote
+# opening with 💡 or ⚠️ (no [!TIP] marker). They must get the same classes, or
+# they render as plain quotes and the warn border never shows.
+_EMOJI_CALLOUT = re.compile(r"<blockquote><p>(""" + "\U0001f4a1|⚠️|⚠" + r")")
+
+
+def emoji_callouts(html_text):
+    def rep(m):
+        warn = m.group(1).startswith("⚠")
+        return ('<blockquote class="callout%s"><p>%s'
+                % (" warn" if warn else "", m.group(1)))
+    return _EMOJI_CALLOUT.sub(rep, html_text)
+
+
 def external_links(html_text):
     return _LINK.sub(r'<a target="_blank" rel="noopener noreferrer" href="\1"',
                      html_text)
@@ -657,8 +674,8 @@ def build_toc_and_ids(body_html):
             cls = ' class="sec-ok"'
         entries.append((int(level), sid, clean))
         para = '<a class="para" href="#%s" aria-label="锚点">¶</a>' % sid
-        return '<h%s id="%s"%s><span class="secmark">§</span>%s%s</h%s>' % (
-            level, sid, cls, inner, para, level)
+        return ('<h%s id="%s"%s><span class="secmark" aria-hidden="true">§</span>'
+                '%s%s</h%s>' % (level, sid, cls, inner, para, level))
 
     new_body = _HEADING.sub(repl, body_html)
     parts = ['<div class="toc-title">目录 CONTENTS</div>']
@@ -877,11 +894,17 @@ _CSS = """
   --tw-sh:rgba(70,60,40,.06);--tbl-hd:rgba(70,60,40,.035);--mnote:#8a6d3b;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
   --mono:ui-monospace,SFMono-Regular,"Cascadia Code","JetBrains Mono","Fira Code",Consolas,monospace}
-@media (prefers-color-scheme: dark){:root{
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
   --fg:#d9dce2;--fg-dim:#98a1ad;--bg:#171a20;--panel:#1e222a;--accent:#8fb1de;
   --rule:#323743;--rule-soft:#2a2f39;--code-bg:#232733;--badge-bg:#2a3a52;
   --badge-fg:#a8c6ea;--quote-bg:#1c2027;--warn:#d29a4a;--ok:#7cc47f;
   --tw-sh:rgba(0,0,0,.35);--tbl-hd:rgba(255,255,255,.04);--mnote:#d3b273}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --fg:#d9dce2;--fg-dim:#98a1ad;--bg:#171a20;--panel:#1e222a;--accent:#8fb1de;
+  --rule:#323743;--rule-soft:#2a2f39;--code-bg:#232733;--badge-bg:#2a3a52;
+  --badge-fg:#a8c6ea;--quote-bg:#1c2027;--warn:#d29a4a;--ok:#7cc47f;
+  --tw-sh:rgba(0,0,0,.35);--tbl-hd:rgba(255,255,255,.04);--mnote:#d3b273}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--fg);
@@ -931,7 +954,7 @@ h2{font-family:var(--sans);font-size:23px;font-weight:700;margin:52px 0 16px;
 h3{font-family:var(--sans);font-size:18px;font-weight:700;margin:34px 0 12px;
   color:var(--accent);text-wrap:balance}
 h4{font-family:var(--sans);font-size:15.5px;font-weight:700;margin:26px 0 10px}
-h2 .secmark{opacity:.4;font-weight:400;margin-right:9px;font-size:.8em}
+h2 .secmark,h3 .secmark{opacity:.4;font-weight:400;margin-right:9px;font-size:.8em}
 h2.sec-warn{border-bottom-color:var(--warn);color:var(--warn)}
 h2.sec-ok{border-bottom-color:var(--ok);color:var(--ok)}
 a.para{opacity:0;margin-left:8px;color:var(--accent);text-decoration:none;
@@ -1036,12 +1059,23 @@ li.task.done>.cb{background:var(--ok);border-color:var(--ok);color:#fff}
 .glance dd{margin:0}
 #zoom{position:fixed;inset:0;background:rgba(10,10,12,.86);display:none;
   z-index:80;align-items:center;justify-content:center;cursor:zoom-out}
-#zoom img{max-width:96vw;max-height:94vh;margin:0;border:none;
+#zoom figure{margin:0;max-width:96vw}
+#zoom img{max-width:96vw;max-height:82vh;margin:0;border:none;
   box-shadow:0 8px 40px rgba(0,0,0,.6);cursor:zoom-out;background:#fff}
+#zoom figcaption{color:#d9dce2;text-align:center;margin-top:12px;font-size:13.5px;
+  padding:0 6px}
+#toc-overlay{display:none;position:fixed;inset:0;z-index:65;
+  background:rgba(0,0,0,.38)}
+#toc-overlay.show{display:block}
 #toc-fab{display:none;position:fixed;right:18px;bottom:18px;z-index:60;
   background:var(--accent);color:#fff;border:none;border-radius:999px;
   width:46px;height:46px;font-size:20px;box-shadow:0 4px 14px rgba(0,0,0,.3);
   cursor:pointer}
+#theme-btn{position:fixed;right:18px;top:18px;z-index:60;width:38px;height:38px;
+  border:1px solid var(--rule);border-radius:999px;background:var(--panel);
+  color:var(--fg-dim);font-size:17px;line-height:1;cursor:pointer;
+  box-shadow:0 2px 8px var(--tw-sh)}
+#theme-btn:hover{color:var(--accent);border-color:var(--accent)}
 footer.build{max-width:46em;margin-top:70px;padding-top:14px;
   border-top:1px solid var(--rule);font-size:12.5px;color:var(--fg-dim)}
 @media (max-width:1120px){
@@ -1053,6 +1087,14 @@ footer.build{max-width:46em;margin-top:70px;padding-top:14px;
   main{padding:30px 22px 80px}
   body{font-size:16px}
 }
+/* manual theme override — data-theme wins over prefers-color-scheme in both
+   directions; "auto" removes the attribute and the media query applies */
+:root[data-theme="light"]{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){img{background:#23252b;filter:brightness(.94)}}
+}
+:root[data-theme="dark"] img{background:#23252b;filter:brightness(.94)}
 /* narrow screens: ≥3-column tables become one card per row */
 @media (max-width:620px){
   .tw{--cols:1}
@@ -1072,7 +1114,7 @@ footer.build{max-width:46em;margin-top:70px;padding-top:14px;
   .tw[data-cards] td:not([data-label])::before{display:none}
   .tw[data-cards] td.num{text-align:left}
 }
-@media print{#progress,nav.toc,#toc-fab,footer.build,#zoom,.copybtn,.texcopy{display:none}
+@media print{#progress,nav.toc,#toc-fab,footer.build,#zoom,#theme-btn,.copybtn,.texcopy{display:none}
   body{background:#fff;color:#111}main{padding:0}article>*{max-width:100%}
   img,blockquote,pre{break-inside:avoid}h2{break-after:avoid}
   .math-block,figure{break-inside:avoid}
@@ -1090,21 +1132,50 @@ function up(){var d=h.scrollHeight-h.clientHeight;
 p.style.width=(d>0?(h.scrollTop||document.body.scrollTop)/d*100:0)+'%';}
 addEventListener('scroll',up,{passive:true});up();
 var toc=document.querySelector('nav.toc'),fab=document.getElementById('toc-fab');
-if(fab)fab.onclick=function(){toc.classList.toggle('open')};
+var ovl=document.getElementById('toc-overlay');
+function closeToc(){toc.classList.remove('open');
+ if(ovl)ovl.classList.remove('show');}
+function fabClick(){var open=toc.classList.toggle('open');
+ if(ovl)ovl.classList.toggle('show',open);}
+if(fab)fab.onclick=fabClick;
+if(ovl)ovl.onclick=closeToc;
 var links=[].slice.call(toc.querySelectorAll('a[href^="#"]')),secs=[];
 links.forEach(function(a){var el=document.getElementById(a.href.split('#')[1]);
-if(el)secs.push([el,a]);});
+if(el)secs.push([el,a]);
+a.addEventListener('click',closeToc);});   /* mobile drawer: follow the link, close */
 if('IntersectionObserver' in window){
  var io=new IntersectionObserver(function(es){es.forEach(function(e){
   if(e.isIntersecting){links.forEach(function(l){l.classList.remove('active')});
    var s=secs.find(function(x){return x[0]===e.target});
    if(s)s[1].classList.add('active');}});},{rootMargin:'-10% 0px -75% 0px'});
  secs.forEach(function(x){io.observe(x[0]);});}
-var z=document.getElementById('zoom');
+var z=document.getElementById('zoom'),zc=document.getElementById('zoom-cap');
 document.querySelectorAll('article img').forEach(function(im){
- im.onclick=function(){z.firstElementChild.src=im.src;z.style.display='flex';};});
+ im.onclick=function(){z.querySelector('img').src=im.src;
+  var fig=im.closest('figure'),cap=fig&&fig.querySelector('figcaption');
+  zc.textContent=cap?cap.textContent:'';
+  zc.style.display=cap?'block':'none';z.style.display='flex';};});
 z.onclick=function(){z.style.display='none';};
-addEventListener('keydown',function(e){if(e.key==='Escape')z.style.display='none';});
+addEventListener('keydown',function(e){if(e.key==='Escape'){z.style.display='none';closeToc();}});
+/* manual theme: auto (follow system) -> light -> dark, remembered per browser */
+var tbtn=document.getElementById('theme-btn');
+var TORDER=['auto','light','dark'],
+    TICON={auto:'◐',light:'☀',dark:'☾'},
+    TLABEL={auto:'跟随系统',light:'亮色',dark:'暗色'};
+function setTheme(t){
+ if(t==='auto')document.documentElement.removeAttribute('data-theme');
+ else document.documentElement.setAttribute('data-theme',t);
+ try{localStorage.setItem('dr-theme',t);}catch(e){}
+ if(tbtn){tbtn.textContent=TICON[t];
+  tbtn.setAttribute('aria-label','配色：'+TLABEL[t]);}}
+if(tbtn){
+ var saved='auto';
+ try{saved=localStorage.getItem('dr-theme')||'auto';}catch(e){}
+ if(TORDER.indexOf(saved)<0)saved='auto';
+ setTheme(saved);
+ tbtn.onclick=function(){
+  var cur=document.documentElement.getAttribute('data-theme')||'auto';
+  setTheme(TORDER[(TORDER.indexOf(cur)+1)%3]);};}
 function copy(text,btn,label){
  var done=function(){var o=btn.textContent;btn.textContent=label;
   setTimeout(function(){btn.textContent=o;},1400);};
@@ -1221,8 +1292,10 @@ _TEMPLATE = """<!doctype html>
 <footer class="build">本页由 <code>tools/render_report.py</code> 从 <code>{source}</code> 确定性生成 · {stamp} · md 为唯一事实源，修订后请重新渲染 · 公式引擎 KaTeX {kmode}</footer>
 </main>
 </div>
-<div id="zoom"><img alt=""></div>
+<div id="zoom"><figure><img alt=""><figcaption id="zoom-cap"></figcaption></figure></div>
+<div id="toc-overlay" aria-hidden="true"></div>
 <button id="toc-fab" aria-label="目录">☰</button>
+<button id="theme-btn" type="button" aria-label="配色：跟随系统">◐</button>
 <script>{js}</script>
 {katex_scripts}
 </body>
@@ -1256,6 +1329,7 @@ def render_report(md_path, out_path=None, offline=False, katex=None,
     body_html = glance_cards(body_html)
     body_html = task_lists(body_html)
     body_html = github_alerts(body_html)
+    body_html = emoji_callouts(body_html)
     body_html = external_links(body_html)
     body_html = linkify_bare_urls(body_html)
     body_html = strip_empty_divs(body_html)

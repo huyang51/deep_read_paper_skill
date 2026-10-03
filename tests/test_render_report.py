@@ -159,6 +159,11 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(rr._pangu_text("汉字x测试"),
                          f"汉字{TS}x{TS}测试")
         self.assertEqual(rr._pangu_text("约80词"), f"约{TS}80{TS}词")
+        # CJK punctuation never takes pangu space: 顿号/句号/书名号 are not
+        # letters, and a thin gap after them reads as a rendering bug.
+        self.assertEqual(rr._pangu_text("方法、工具"), "方法、工具")
+        self.assertEqual(rr._pangu_text("结束。Next"), "结束。Next")
+        self.assertEqual(rr._pangu_text("详见《Deep RL》一书"), "详见《Deep RL》一书")
         out = rr._pangu_text("在<code>code内x字</code>中end")
         self.assertIn("<code>code内x字</code>", out)      # span untouched…
         self.assertIn(f"中{TS}end", out)                  # …text around still spaced
@@ -169,6 +174,34 @@ class RenderTest(unittest.TestCase):
         # <code> before the span alternative gets a chance
         out = rr._pangu_text("<code>a内b</code>")
         self.assertEqual(out, "<code>a内b</code>")
+
+    def test_emoji_callouts(self):
+        """💡/⚠️ blockquotes (the template's light callout form) must get the
+        same classes as the [!TIP]/[!WARNING] form, or the warn border never
+        shows and the two spellings of the same intent render differently."""
+        self.assertEqual(
+            rr.emoji_callouts("<blockquote><p>💡 提示内容</p>"),
+            '<blockquote class="callout"><p>💡 提示内容</p>')
+        self.assertEqual(
+            rr.emoji_callouts("<blockquote><p>⚠️ 注意内容</p>"),
+            '<blockquote class="callout warn"><p>⚠️ 注意内容</p>')
+        self.assertEqual(
+            rr.emoji_callouts("<blockquote><p>普通引用</p>"),
+            "<blockquote><p>普通引用</p>")
+
+    def test_chrome_fixes_present(self):
+        """The small-chrome batch: h3 secmark (aria-hidden), mobile drawer
+        overlay + link-closes, zoom keeps its caption, manual theme toggle."""
+        h = self._h()
+        out = rr.build_toc_and_ids("<h2>A</h2><h3>B</h3>")[1]
+        self.assertIn('<span class="secmark" aria-hidden="true">§</span>', out)
+        self.assertIn('id="toc-overlay"', h)             # drawer backdrop
+        self.assertIn('id="zoom-cap"', h)                # zoom keeps the caption
+        self.assertIn('id="theme-btn"', h)               # manual theme toggle
+        self.assertIn(":root[data-theme=\"dark\"]", h)   # three-state palette
+        self.assertIn(":root:not([data-theme=\"light\"])", h)
+        self.assertIn("closeToc", h)                     # drawer link click closes
+        self.assertIn("dr-theme", h)                     # theme persisted
 
 
 class ChromeV21Test(unittest.TestCase):
