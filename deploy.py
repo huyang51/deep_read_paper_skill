@@ -150,7 +150,7 @@ def render_template(template_path: Path, variables: dict) -> str:
     return content
 
 
-def generate_config(register: bool = False):
+def generate_config(register: bool = False, hf_endpoint: str = ""):
     print("=" * 55)
     print("  deep_read_paper_skill -- config generator")
     print("=" * 55)
@@ -206,8 +206,11 @@ def generate_config(register: bool = False):
     # (Claude Code: MCP_TIMEOUT, 30s) turns that into "the tools never appear".
     decision = prefer_cached_model(model)
     if not decision.cached:
-        print("  [注意] 嵌入模型尚未缓存：首次启动需联网下载，")
-        print("         若网络到不了 huggingface.co，会先卡到超时再回退。")
+        print("  [注意] 嵌入模型尚未缓存：首次索引调用需联网下载。")
+        print("         若网络到不了 huggingface.co，注册时加：")
+        print("           --hf-endpoint https://hf-mirror.com")
+        print("         （模型由 server 进程下载，外层 shell 里 export HF_ENDPOINT")
+        print("         到不了它，必须注册时注入。）")
     elif decision.offline:
         print("  [OK] 嵌入模型已在本地缓存 —— 启动跳过 Hub 联网检查")
     else:
@@ -265,7 +268,7 @@ def generate_config(register: bool = False):
         print(f"  cp output/.claude-settings.json <project>/.claude/settings.json")
 
     print()
-    register_mcp_server(name, skill_dir, python_cmd, register)
+    register_mcp_server(name, skill_dir, python_cmd, register, hf_endpoint)
     print()
     check_skill_discovery(project_dir)
     print("=" * 55)
@@ -385,15 +388,25 @@ def warn_if_shadowed(project_dir: Path, name: str):
         print(f"         删掉它：  rm \"{mcp_json}\"")
 
 
-def registration_command(name: str, skill_dir: str, python_cmd: str):
+def registration_command(name: str, skill_dir: str, python_cmd: str,
+                         hf_endpoint: str = ""):
     """The `claude mcp add` argv that registers the server at user scope.
 
     No `cwd`: `claude mcp add` has none, and the server does not need one —
     `config.py` resolves settings.json from `__file__`, and PYTHONPATH is what
     makes `-m mcp_server` importable from any directory.
+
+    hf_endpoint is baked in as an env of the registration itself, because the
+    *server process* is the one that downloads the embedding model: exporting
+    HF_ENDPOINT in the shell that runs deploy.py does not reach it. (The lazy
+    init reads the variable again inside the worker, so a re-registration is
+    all it takes — no settings.json change.)
     """
-    return ["claude", "mcp", "add", "--scope", "user", name,
-            "-e", f"PYTHONPATH={skill_dir}", "--", python_cmd, "-m", "mcp_server"]
+    argv = ["claude", "mcp", "add", "--scope", "user", name,
+            "-e", f"PYTHONPATH={skill_dir}"]
+    if hf_endpoint:
+        argv += ["-e", f"HF_ENDPOINT={hf_endpoint}"]
+    return argv + ["--", python_cmd, "-m", "mcp_server"]
 
 
 def runnable(argv):
@@ -413,7 +426,8 @@ def runnable(argv):
     return [exe] + list(argv[1:])
 
 
-def register_mcp_server(name: str, skill_dir: str, python_cmd: str, run_it: bool):
+def register_mcp_server(name: str, skill_dir: str, python_cmd: str, run_it: bool,
+                        hf_endpoint: str = ""):
     """Tell the user how to register at user scope — or do it, with --register.
 
     Why user scope: a server delivered by a project `.mcp.json` is gated behind
@@ -423,7 +437,7 @@ def register_mcp_server(name: str, skill_dir: str, python_cmd: str, run_it: bool
     folder is trusted. User scope is not gated: `claude mcp add` is the user's
     own action, so there is nothing left to approve.
     """
-    argv = registration_command(name, skill_dir, python_cmd)
+    argv = registration_command(name, skill_dir, python_cmd, hf_endpoint)
     printable = " ".join(f'"{a}"' if " " in a else a for a in argv)
 
     if not run_it:
@@ -512,8 +526,13 @@ def main():
         "--register", action="store_true",
         help="也执行 claude mcp add --scope user，把 MCP server 注册进你的用户级配置"
              "（默认只打印命令，不动你的配置）")
+    parser.add_argument(
+        "--hf-endpoint", default="",
+        help="把 HF_ENDPOINT 写进 MCP 注册项（如 https://hf-mirror.com）。"
+             "嵌入模型由 server 进程下载，只在外层 shell export 到不了它——"
+             "必须注册时注入。对已有注册：先 claude mcp remove --scope user 再重跑。")
     args = parser.parse_args()
-    generate_config(register=args.register)
+    generate_config(register=args.register, hf_endpoint=args.hf_endpoint)
 
 
 if __name__ == "__main__":

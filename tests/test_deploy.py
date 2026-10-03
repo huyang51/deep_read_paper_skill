@@ -83,6 +83,22 @@ class RegistrationCommandTest(unittest.TestCase):
 
         self.assertLess(argv.index("--"), argv.index("-m"))
 
+    def test_hf_endpoint_is_baked_into_the_registration(self):
+        """The *server process* downloads the embedding model, so exporting
+        HF_ENDPOINT in the shell that runs deploy.py never reaches it — it
+        must be injected as an env of the registration itself."""
+        argv = deploy.registration_command("n", "D:/skill", "D:/py.exe",
+                                           hf_endpoint="https://hf-mirror.com")
+        self.assertIn("HF_ENDPOINT=https://hf-mirror.com", argv)
+        self.assertIn("PYTHONPATH=D:/skill", argv)
+        self.assertLess(argv.index("-e"), argv.index("--"))
+
+    def test_no_hf_endpoint_adds_nothing(self):
+        """Default (no flag) keeps the command exactly as before — mirrors and
+        proxies are an opt-in, not a silent global."""
+        argv = deploy.registration_command("n", "D:/skill", "D:/py.exe")
+        self.assertFalse(any(a.startswith("HF_ENDPOINT") for a in argv))
+
 
 class RunnableTest(unittest.TestCase):
     def test_missing_command_reports_none(self):

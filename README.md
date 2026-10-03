@@ -103,7 +103,7 @@ graph TD
 | **Python** | **3.9+** | Matches `requires-python` in `pyproject.toml`; the code deliberately avoids 3.10-only syntax |
 | **Conda** (Anaconda / Miniconda) | any | The skill **requires its own environment** (named `paper-kb` below) — not base, not a shared project env |
 | **Disk** | ~3 GB | CPU build of torch + embedding model + dependencies |
-| **Network** | Model download on first run | The default embedder `paraphrase-multilingual-MiniLM-L12-v2` is ~470 MB and comes from HuggingFace. Behind a slow/blocked connection set `HF_ENDPOINT=https://hf-mirror.com` or the first run hangs |
+| **Network** | Model download on first run | The default embedder `paraphrase-multilingual-MiniLM-L12-v2` is ~470 MB and comes from HuggingFace. Behind a slow/blocked connection register with `python deploy.py --register --hf-endpoint https://hf-mirror.com` (the model is downloaded by the *server process* — an export in your shell never reaches it), or the first index call hangs |
 | **Claude Code** | with skills enabled | and this repo inside a skills discovery path (`~/.claude/skills/` etc.) — see Installation step 0 |
 | **Obsidian** | optional | Only for graph visualization |
 

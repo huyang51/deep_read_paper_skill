@@ -103,7 +103,7 @@ graph TD
 | **Python** | **3.9+** | 与 `pyproject.toml` 的 `requires-python` 一致（代码刻意避开 3.10 独有语法） |
 | **Conda**（Anaconda / Miniconda） | 任意版本 | 本 skill **要求一个专用环境**（下称 `paper-kb`）——不要装进 base，也不要跟别的项目共用 |
 | **磁盘** | 约 3 GB | CPU 版 torch + 嵌入模型 + 依赖 |
-| **网络** | 首次运行需下载嵌入模型 | 默认模型 `paraphrase-multilingual-MiniLM-L12-v2` 约 470 MB，从 HuggingFace 拉取；国内网络请先设 `HF_ENDPOINT=https://hf-mirror.com`，否则会卡在下载 |
+| **网络** | 首次运行需下载嵌入模型 | 默认模型 `paraphrase-multilingual-MiniLM-L12-v2` 约 470 MB，从 HuggingFace 拉取；国内网络请用 `python deploy.py --register --hf-endpoint https://hf-mirror.com` 注册（模型由 server 进程下载，shell 里 export 到不了它），否则会卡在下载 |
 | **Claude Code** | 启用 skills 功能 | 且本仓库必须位于 skills 发现路径（`~/.claude/skills/` 等），见安装第 0 步 |
 | **Obsidian** | 可选 | 只用于知识图谱可视化 |
 
