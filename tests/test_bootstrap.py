@@ -53,6 +53,55 @@ class SeedVaultTest(unittest.TestCase):
         self.assertEqual(result, "no-template")
 
 
+class SeedObsidianTest(unittest.TestCase):
+    """--seed-obsidian merges the template into an EXISTING vault, additions
+    only. The real vault predates the template's graph.json/Dataview files, so
+    its direction arrows degrade to undirected lines and index.md's dynamic
+    table is dead — but an indiscriminate copy would reconfigure a working
+    vault, so anything already there must never be overwritten."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.template = self.tmp / "template"
+        (self.template / ".obsidian").mkdir(parents=True)
+        (self.template / ".obsidian" / "graph.json").write_text(
+            '{"colorGroups": []}', encoding="utf-8")
+        (self.template / ".obsidian" / "app.json").write_text(
+            '{"legacyEditor": false}', encoding="utf-8")
+        (self.template / "index.md").write_text("# Index\n", encoding="utf-8")
+        self.vault = self.tmp / "kb"
+        self.vault.mkdir()
+        (self.vault / ".obsidian").mkdir()
+        (self.vault / ".obsidian" / "app.json").write_text(
+            '{"readableLineLength": true}', encoding="utf-8")
+
+    def run_seed(self):
+        with unittest.mock.patch.object(bootstrap, "VAULT_TEMPLATE",
+                                        self.template):
+            return bootstrap.seed_obsidian(self.vault)
+
+    def test_missing_files_are_added(self):
+        written = self.run_seed()
+        self.assertIn(".obsidian\\graph.json".replace("\\", "/")
+                      if "\\" in str(self.vault) else ".obsidian/graph.json",
+                      [w.replace("\\", "/") for w in written])
+        self.assertTrue((self.vault / ".obsidian" / "graph.json").exists())
+        self.assertTrue((self.vault / "index.md").exists())
+
+    def test_existing_files_are_never_overwritten(self):
+        self.run_seed()
+        app = self.vault / ".obsidian" / "app.json"
+        self.assertEqual(app.read_text(encoding="utf-8"),
+                         '{"readableLineLength": true}')
+
+    def test_second_run_is_a_no_op(self):
+        self.run_seed()
+        second = self.run_seed()
+        self.assertEqual(second, [])
+
+
 class WriteSettingsTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

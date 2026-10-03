@@ -148,6 +148,32 @@ def seed_vault(vault: Path) -> str:
     return "seeded"
 
 
+def seed_obsidian(vault: Path) -> list:
+    """Merge the template's Obsidian files into an EXISTING vault — additions
+    only. Returns the list of files written.
+
+    The template only reaches a brand-new vault today, so the real vault
+    (created before the template grew these files) runs without graph.json and
+    the Dataview index: direction arrows degrade to undirected lines and
+    index.md's dynamic table shows nothing. What may be added is exactly what
+    is missing; app.json and any file the vault already has are never touched —
+    overwriting either would reconfigure somebody's working vault.
+    """
+    if not VAULT_TEMPLATE.is_dir() or not vault.is_dir():
+        return []
+    written = []
+    for src in sorted(VAULT_TEMPLATE.rglob("*")):
+        if not src.is_file():
+            continue
+        dest = vault / src.relative_to(VAULT_TEMPLATE)
+        if dest.exists():
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(src, dest)
+        written.append(str(dest.relative_to(vault)))
+    return written
+
+
 def write_settings(payload: dict, force: bool = False) -> str:
     """Write settings.json. Returns "written", "kept" or "overwritten"."""
     if SETTINGS_FILE.exists() and not force:
@@ -192,6 +218,9 @@ def parse_args(argv=None):
                         help="缺少依赖时不建 conda 环境，直接报错退出")
     parser.add_argument("--no-vault-template", action="store_true",
                         help="不把 vault-template/ 复制进新知识库")
+    parser.add_argument("--seed-obsidian", action="store_true",
+                        help="对已存在的知识库补齐缺失的 Obsidian 文件"
+                             "（graph.json、index.md 等；只增不改，已存在的一律不动）")
     parser.add_argument("--force", action="store_true",
                         help="覆盖已存在的 settings.json（先备份为 settings.json.bak）")
     parser.add_argument("--yes", "-y", action="store_true",
@@ -316,6 +345,14 @@ def main(argv=None):
             log(f"  [OK] 知识库已按 vault-template/ 初始化：{vault}")
         elif state == "exists":
             log(f"  [OK] 知识库已存在，未改动：{vault}")
+            if args.seed_obsidian:
+                added = seed_obsidian(vault)
+                if added:
+                    log(f"  [OK] 已补齐缺失的 Obsidian 文件（只增不改）：")
+                    for item in added:
+                        log(f"       + {item}")
+                else:
+                    log("  [OK] Obsidian 模板文件已齐全，无需补齐")
 
     log()
     log("-" * 55)
