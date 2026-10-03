@@ -700,7 +700,7 @@ python tools/verify_graph_arrows.py
 1. 通过 `index_paper.py --relations` / MCP 工具 `paper_index` 的 `relations` 参数声明；脚本同步互指条目与图谱边
 2. **新论文** body 中引用旧论文用**加粗文本**（如 `**PreFLMR**`），**不要**用 wikilink
 3. 依据仍然写在正文 `## 与前人工作的关系` / 方法概述里（`verify_graph_arrows.py` 第 ③ 层检查它）；`note` 只是索引卡上的一句话
-4. 如有有价值的跨论文创新见解，在 vault 的 `insights/` 下创建 insight 文件，frontmatter 中 `papers` 列表按年份从早到晚排列
+4. 如有有价值的跨论文创新见解，在 vault 的 `insights/` 下创建 insight 文件，frontmatter 中 `source_papers` 列表（与 `.obsidian/templates/insight-template.md` 一致，index.md 的 Dataview 也按它取列）按年份从早到晚排列；正文引用论文同样用**加粗文本**，不用 wikilink
 
 #### 4.5.3 旧 vault 迁移
 
