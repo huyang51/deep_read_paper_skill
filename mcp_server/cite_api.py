@@ -20,6 +20,7 @@ workflow can degrade to "unverified" labels instead of crashing.
 import difflib
 import json
 import re
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -79,7 +80,17 @@ def _mailto() -> str:
 
 
 def _norm_title(t: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", (t or "").lower())).strip()
+    # NFKC + casefold over `[^a-z0-9 ]`: the old form stripped every
+    # non-ASCII char, so a purely Chinese title normalized to "" and scored
+    # 0.0 against itself — cite_verify could only ever answer uncertain or
+    # not_found for one. \w keeps letters and digits of every script (CJK
+    # included); underscores are punctuation, so they go back to spaces.
+    normalized = unicodedata.normalize("NFKC", (t or "").casefold())
+    return re.sub(r"\s+", " ", re.sub(r"[^\w ]|_", " ", normalized)).strip()
+
+
+def _has_cjk(s: str) -> bool:
+    return any("一" <= ch <= "鿿" for ch in (s or ""))
 
 
 def title_similarity(a: str, b: str) -> float:
@@ -330,6 +341,18 @@ def cite_verify(query: str = "", author: str = "", year=None,
         idx = 1
     else:
         idx = 0
+        # Different writing systems can never be char-confirmed: a Chinese
+        # title queried against an English-language record (or the reverse)
+        # scores ~0 however real the citation is. Degrade to author+year
+        # agreement instead of reading the script gap as a fake citation.
+        if _has_cjk(q) != _has_cjk(best["title"]):
+            if (not author or best["author_match"]) and (not year or best["year_match"]):
+                idx = 2
+            else:
+                idx = 1
+            result["notes"].append(
+                "标题不可比（书写系统不同，字符相似度恒低）：按作者+年份匹配降级判定，"
+                "仍不能确证为同一篇。")
     # Cross-check mismatches downgrade the verdict one level each:
     if author and not best["author_match"]:
         idx -= 1

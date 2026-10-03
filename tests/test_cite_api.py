@@ -121,6 +121,20 @@ class SimilarityTest(unittest.TestCase):
             "Deep Residual Learning for Image Recognition",
             "Generative Adversarial Nets"), 0.5)
 
+    def test_chinese_title_scores_against_itself(self):
+        """Regression: `[^a-z0-9 ]` stripped every non-ASCII char, so a purely
+        Chinese title normalized to "" and scored 0.0 even against itself —
+        cite_verify could only answer uncertain/not_found for one."""
+        title = "基于注意力机制的中文文本摘要方法研究"
+        self.assertTrue(cite_api._norm_title(title))
+        self.assertGreaterEqual(
+            cite_api.title_similarity(title, title), 0.99)
+
+    def test_mixed_script_titles_do_not_confuse_english_ones(self):
+        english = cite_api.title_similarity("Attention Is All You Need",
+                                            "attention is all you need")
+        self.assertGreaterEqual(english, 0.99)
+
 
 class BriefTest(unittest.TestCase):
     def test_normalisation(self):
@@ -150,6 +164,29 @@ class CiteVerifyTest(Patched):
                                  author="NobodyHere")
         self.assertEqual(r["verdict"], "probable")
         self.assertTrue(any("author" in n for n in r["notes"]))
+
+    def test_chinese_title_exact(self):
+        """Regression: a purely Chinese title used to normalize to "" and
+        could never clear the 0.75 title floor — every real citation of a
+        Chinese paper verdicted uncertain at best."""
+        cn = _oa_work("W4999999999", "基于注意力机制的中文文本摘要方法研究", 2023,
+                      authors=("张三",))
+        self.route(search_payload=[cn])
+        r = cite_api.cite_verify(query="基于注意力机制的中文文本摘要方法研究",
+                                 author="张三", year=2023)
+        self.assertEqual(r["verdict"], "exact")
+        self.assertGreaterEqual(r["matches"][0]["similarity"], 0.92)
+
+    def test_cross_script_title_degrades_to_author_year(self):
+        """Chinese query against an English-language record: character
+        similarity is ~0 however real the citation is. With author+year
+        agreeing the verdict must be probable (not uncertain), with a note
+        saying the title itself was not comparable."""
+        self.route(search_payload=[REAL])
+        r = cite_api.cite_verify(query="注意力就是你所需要的一切",
+                                 author="Vaswani", year=2017)
+        self.assertEqual(r["verdict"], "probable")
+        self.assertTrue(any("标题不可比" in n for n in r["notes"]))
 
     def test_not_found_guidance(self):
         self.route(search_payload=[])
