@@ -27,6 +27,27 @@ class DimensionsSplitTest(unittest.TestCase):
             with self.subTest(dimension=i):
                 self.assertRegex(dims, rf"(?m)^### 2\.{i} ")
 
+    def test_dimensions_md_keeps_each_dimension_mandated_output(self):
+        """Truncation tripwire: 11 section HEADERS existing proves little —
+        losing the tensor-table out of 2.3 or the silence-checklist out of
+        2.5 keeps the heading and guts the dimension. Keywords are the
+        artifacts SKILL/模板/QA gates reference by name."""
+        dims = _read("references", "dimensions.md")
+        per_dimension = {
+            "2.1": "思维链",               # chain-of-thought evidence rule
+            "2.2": "改进脉络对比表",        # lineage-comparison table
+            "2.3": "张量符号",              # tensor symbol table + walk-through
+            "2.5": "沉默对照",              # silent-comparison checklist
+            "2.7": "失效场景",              # failure scenarios (M-numbered)
+            "2.8": "rebuttal",              # rejection risk + rebuttal plans
+            "2.9": "反事实",                # counterfactual conditions
+            "2.10": "隐含假设",             # implicit assumptions (A-numbered)
+            "2.11": "行动地图",             # action map
+        }
+        for dim, kw in per_dimension.items():
+            with self.subTest(dim=dim):
+                self.assertIn(kw, dims)
+
     def test_dimensions_md_carries_routing_and_hard_checks(self):
         dims = _read("references", "dimensions.md")
         self.assertIn("### 类型路由", dims)

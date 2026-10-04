@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mcp_server import models  # noqa: E402
+from mcp_server.relations import RELATION_TYPES  # noqa: E402
 from mcp_server.server import TOOLS  # noqa: E402
 
 # tool name -> the pydantic model that validates its params
@@ -101,14 +102,43 @@ class SchemaDriftTest(unittest.TestCase):
             ("paper_search", "response_format",
              sorted(e.value for e in models.ResponseFormat)),
             ("paper_index", "read_mode", ["quick", "standard", "deep"]),
+            # "" is the default and means "unset" — a JSON-schema default
+            # outside its own enum makes the schema contradict itself
             ("paper_index", "novelty_level",
-             ["incremental", "substantial", "breakthrough"]),
+             ["", "incremental", "substantial", "breakthrough"]),
+            # against the vocabulary table, not a hand-copied list: this one
+            # was missing here entirely when the audit found it
+            ("paper_find_related", "relation_type", sorted(RELATION_TYPES)),
         ]
         for tool, prop, values in checks:
             with self.subTest(tool=tool, prop=prop):
                 enum = by_name[tool]["inputSchema"]["properties"][prop].get("enum")
                 self.assertIsNotNone(enum, f"{tool}.{prop}: schema has no enum")
                 self.assertEqual(sorted(enum), sorted(values))
+
+    def test_schema_carries_every_model_constraint(self):
+        """Anything the model enforces (ge/le/pattern) must also be visible
+        to the agent in the schema — otherwise the agent pays a rejected
+        round-trip for a value we could have told it up front. Compared
+        against pydantic's own JSON-schema export, so adding a constraint to
+        a model lights this up without re-enumerating fields by hand."""
+        by_name = {t["name"]: t for t in TOOLS}
+        for tool_name, model in TOOL_MODELS.items():
+            gen = model.model_json_schema().get("properties", {})
+            props = by_name[tool_name]["inputSchema"].get("properties", {})
+            for field, gspec in gen.items():
+                if field not in props:
+                    continue
+                with self.subTest(tool=tool_name, field=field):
+                    for key in ("minimum", "maximum", "pattern"):
+                        # Optional fields nest constraints in anyOf branches
+                        branches = [gspec] + [g for g in gspec.get("anyOf", [])
+                                              if isinstance(g, dict)]
+                        for cand in branches:
+                            if key in cand:
+                                self.assertEqual(props[field].get(key), cand[key],
+                                                 f"{tool_name}.{field}: {key} drift")
+                                break
 
 
 if __name__ == "__main__":
