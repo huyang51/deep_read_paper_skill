@@ -23,11 +23,17 @@ def load_keywords() -> list[str]:
     config_file = SKILL_DIR / "settings.json"
     if config_file.exists():
         try:
-            with open(config_file, "r", encoding="utf-8") as f:
+            # utf-8-sig matches mcp_server/config.py: an editor that saved the
+            # file as "UTF-8 with BOM" (Notepad's default) used to make this
+            # json.load raise, silently downgrading to the hardcoded fallback.
+            with open(config_file, "r", encoding="utf-8-sig") as f:
                 config = json.load(f)
             cn = config.get("trigger_keywords_cn", ["论文", "文献"])
             en = config.get("trigger_keywords_en", ["paper", "literature"])
-            return cn + en
+            # dict.fromkeys, not plain `+`: with the same word in both tables
+            # (settings.example ships "paper" twice) the prompt echoed
+            # 「检测到…关键词 (论文, paper, paper)」.
+            return list(dict.fromkeys(list(cn) + list(en)))
         except Exception:
             pass
     return ["论文", "文献", "paper", "literature"]
@@ -142,7 +148,9 @@ def main():
         ]
         for r in results:
             lines.append(f"> - [{r['paper_id']}] {r['title']} (匹配度: {r['score']})")
-        lines.append("> 使用 `paper_get({{id}})` 查看详情，或 `paper_search(\"查询\")` 进行语义检索。")
+        # Plain string, so the old text shipped a literal `{{id}}` into every
+        # session transcript — the intended placeholder never existed here.
+        lines.append("> 使用 `paper_get(paper_id=<编号>)` 查看详情，或 `paper_search(\"查询\")` 进行语义检索。")
         context = "\n".join(lines)
 
     output = {

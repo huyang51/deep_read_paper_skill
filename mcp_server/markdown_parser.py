@@ -2,6 +2,7 @@ import contextlib
 import os
 import re
 import time
+import uuid
 import frontmatter
 from datetime import date
 from pathlib import Path
@@ -32,9 +33,24 @@ def parse_paper(path: Path) -> dict:
     return metadata
 
 
+def _clean_link_name(raw: str) -> str:
+    """Strip the alias and heading-anchor parts of a wikilink target.
+
+    ``[[FLMR-v2|论文二]]`` names FLMR-v2; ``[[note#section]]`` names note.
+    Hand-written links use aliases constantly (that is what they are for), and
+    until here every resolver — cross_refs inference, _drop_links_to, the
+    cleanup after a deletion — compared the raw ``a|b`` text against clean
+    labels and missed, so deleting a paper left its aliased ``## 后续引用``
+    edge as an Obsidian ghost while the cleanup cheerfully reported "nothing
+    to do". Link TEXT is only ever rewritten from this cleaned form, matching
+    what sync has always written (``- [[stem]]``).
+    """
+    return raw.split("|", 1)[0].split("#", 1)[0].strip()
+
+
 def extract_wikilinks(content: str) -> list[str]:
-    """Extract [[wikilinks]] from markdown content."""
-    return re.findall(r'\[\[([^\]]+)\]\]', content)
+    """Extract [[wikilinks]] from markdown content (targets, aliases stripped)."""
+    return [_clean_link_name(m) for m in re.findall(r'\[\[([^\]]+)\]\]', content)]
 
 
 # Simple TTL cache for get_all_papers to avoid re-parsing every .md file on each call.
@@ -119,7 +135,14 @@ def get_paper_by_id(paper_id: int, papers_dir: Path = None) -> Optional[dict]:
     paper_id = coerce_id(paper_id)
     matches = []
     for paper_file in papers_dir.glob("*.md"):
-        parsed = parse_paper(paper_file)
+        try:
+            parsed = parse_paper(paper_file)
+        except Exception:
+            # Same tolerance as get_all_papers' scan: one unrelated file with
+            # malformed frontmatter (a stray tab, an unclosed quote) must not
+            # raise through a lookup of a perfectly valid id — it took
+            # paper_get/paper_remove/paper_find_related down vault-wide.
+            continue
         if parsed and coerce_id(parsed.get("id")) == paper_id:
             matches.append(parsed)
 
@@ -331,7 +354,7 @@ def _create_paper_file_impl(paper_data: dict, papers_dir: Path) -> Path:
     # Written aside and swapped in: os.replace is atomic within a filesystem, so
     # readers see either the old note or the new one, never a half-written file.
     newline = kept_newline or _detect_newline(filepath)
-    tmp_path = filepath.with_name(filepath.name + ".tmp")
+    tmp_path = filepath.with_name(f"{filepath.name}.{uuid.uuid4().hex[:8]}.tmp")
     try:
         with open(tmp_path, "w", encoding="utf-8", newline=newline) as f:
             f.write(file_content.rstrip() + "\n")
@@ -376,6 +399,30 @@ def _paper_path(paper: dict, papers_dir: Path) -> Optional[Path]:
     return filepath if filepath is not None and filepath.exists() else None
 
 
+def _fresh_paper(paper: dict, papers_dir: Path) -> Optional[dict]:
+    """Re-read a paper's note from disk before a read-modify-write on it.
+
+    The sync/cleanup paths receive their papers from the ≤5 s TTL cache
+    (`get_all_papers`). A whole-file rewrite built from that snapshot silently
+    ROLLED BACK any external edit (Obsidian, another session) made after the
+    scan — live repro 2026-10-04: a body line appended between cache-fill and
+    mirror-write simply disappeared. Re-read the file first and operate on the
+    fresh content; None means "note gone or unparseable" — a hand-broken file
+    must be left alone, not repaired from a stale copy. The write lock inside
+    _write_paper plus this narrow reload window is the guard; a true
+    cross-process read-modify-write would need per-file versions, which the
+    vault model (single-writer-per-note, script-managed edges) does not pay.
+    """
+    path = _paper_path(paper, papers_dir)
+    if path is None:
+        return None
+    try:
+        fresh = parse_paper(path)
+    except Exception:
+        return None
+    return fresh or None
+
+
 def _detect_newline(path: Path) -> str:
     """Return the newline convention of an existing file ("\\r\\n" or "\\n").
 
@@ -398,10 +445,26 @@ def _detect_newline(path: Path) -> str:
 
 
 def _write_paper(path: Path, metadata: dict, body: str) -> None:
+    """Atomically rewrite an existing paper note under the vault write lock.
+
+    Same discipline as create's write path, for the two ways it used to differ:
+    a direct `open(path, "w")` truncates first, so a concurrent reader (the
+    watcher, Obsidian, another session) could see a half-written file; and the
+    fixed `name + ".tmp"` sidecar collided across the sync/cleanup paths, so
+    two writers could step on each other's temp file before either replace.
+    """
     post = frontmatter.Post(body, **metadata)
     text = frontmatter.dumps(post).rstrip() + "\n"
-    with open(path, "w", encoding="utf-8", newline=_detect_newline(path)) as f:
-        f.write(text)
+    newline = _detect_newline(path)
+    with _vault_write_lock(path.parent):
+        tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8", newline=newline) as f:
+                f.write(text)
+            os.replace(tmp_path, path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
 
 def _link_text(paper: dict) -> str:
@@ -425,7 +488,8 @@ def _split_followup(body: str) -> tuple[str, list[str], str]:
     before, rest = body.split(FOLLOWUP_HEADER, 1)
     m = re.search(r"\n## ", rest)
     section, after = (rest[:m.start()], rest[m.start():]) if m else (rest, "")
-    return before, re.findall(r"\[\[([^\]]+)\]\]", section), after
+    return before, [_clean_link_name(x) for x in
+                    re.findall(r"\[\[([^\]]+)\]\]", section)], after
 
 
 def _rebuild_followup(before: str, links: list[str], after: str) -> str:
@@ -534,6 +598,13 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
         if path is None:
             result["missing"].append(entry["target"])
             continue
+        # The mirror rewrites the OTHER file wholesale — merge onto what is on
+        # disk right now, never onto the ≤5 s cache snapshot (see _fresh_paper).
+        fresh = _fresh_paper(other, papers_dir)
+        if fresh is None:
+            result["missing"].append(entry["target"])
+            continue
+        other = fresh
 
         back = relations_of(other)
         if not back and other.get("related_papers"):
@@ -566,13 +637,17 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
         for pid, other in index.items():
             if pid == self_id or pid in declared_ids:
                 continue
+            path = _paper_path(other, papers_dir)
+            if path is None:
+                continue
+            fresh = _fresh_paper(other, papers_dir)
+            if fresh is None:
+                continue
+            other = fresh                    # heal writes whole files too
             back = relations_of(other)
             kept = [e for e in back
                     if not (e["target"] == self_id and e.get("synced"))]
             if len(kept) == len(back):
-                continue
-            path = _paper_path(other, papers_dir)
-            if path is None:
                 continue
             body, _ = _drop_links_to(other.get("body", ""), resolver, {self_id})
             metadata = {k: v for k, v in other.items()
@@ -586,6 +661,7 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
             me = index.get(self_id)
             my_path = _paper_path(me, papers_dir) if me else None
             if my_path is not None:
+                me = _fresh_paper(me, papers_dir) or me
                 body, dropped = _drop_links_to(me.get("body", ""), resolver,
                                                set(result["healed"]))
                 if dropped:
@@ -651,6 +727,10 @@ def sync_graph_edges(paper: dict, papers_dir: Path = None) -> dict:
         path = _paper_path(p, papers_dir)
         if path is None:
             continue
+        fresh = _fresh_paper(p, papers_dir)
+        if fresh is None:
+            continue
+        p = fresh                # edge sections are rewritten whole-file
         before, existing, after = _split_followup(p.get("body", ""))
         keep = []
         for link in existing:
@@ -699,7 +779,14 @@ def sync_paper_relations(paper: dict, papers_dir: Path = None) -> dict:
 
 
 def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
-    """Delete a paper markdown file by its ID. Returns True if deleted."""
+    """Delete EVERY note carrying this ID. Returns True if anything was deleted.
+
+    The old code deleted the first match and returned. Duplicate ids do survive
+    in hand-maintained vaults (get_paper_by_id warns about exactly that), and
+    the leftover note made the watcher cheerfully re-index the "deleted" paper
+    straight back into the vector store — deletion said ok while search kept
+    returning it.
+    """
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
@@ -707,34 +794,37 @@ def delete_paper_file(paper_id: int, papers_dir: Path = None) -> bool:
     if not paper:
         return False
 
-    file_rel = paper.get("file", "")
-    if file_rel:
-        # Construct path relative to the papers_dir's parent vault. The guard
-        # refuses a ``file:`` that escapes the vault, so a hand-edited or
-        # imported frontmatter cannot make this delete an arbitrary file; the
-        # ID scan below still finds the real note inside papers_dir.
-        filepath = _safe_vault_path(file_rel, papers_dir)
-        if filepath is not None and filepath.exists():
-            filepath.unlink()
-            # The cache outlives the file (5s TTL), and the watcher reacts to
-            # this deletion by re-indexing from it — without this the paper was
-            # upserted straight back into ChromaDB and paper_search kept
-            # returning a paper whose note no longer existed.
-            invalidate_papers_cache()
-            return True
+    targets: set[Path] = set()
+    # The guard refuses a ``file:`` that escapes the vault, so a hand-edited or
+    # imported frontmatter cannot make this delete an arbitrary file; the
+    # ID scan below still finds the real note inside papers_dir.
+    filepath = _safe_vault_path(paper.get("file", ""), papers_dir)
+    if filepath is not None and filepath.exists():
+        targets.add(filepath)
 
-    # Fallback: scan all .md files in papers_dir by frontmatter ID
+    target_id = coerce_id(paper_id)
     for f in papers_dir.glob("*.md"):
         try:
             parsed = parse_paper(f)
-            if parsed and coerce_id(parsed.get("id")) == coerce_id(paper_id):
-                f.unlink()
-                invalidate_papers_cache()
-                return True
         except Exception:
             continue
+        if parsed and coerce_id(parsed.get("id")) == target_id:
+            targets.add(f)
 
-    return False
+    deleted = False
+    for f in targets:
+        try:
+            # The cache outlives the file (5s TTL), and the watcher reacts to
+            # this deletion by re-indexing from it — without invalidation the
+            # paper was upserted straight back into ChromaDB and paper_search
+            # kept returning a paper whose note no longer existed.
+            f.unlink()
+            deleted = True
+        except OSError:
+            pass
+    if deleted:
+        invalidate_papers_cache()
+    return deleted
 
 
 def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
@@ -766,6 +856,13 @@ def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
     gone_links = {s for s in (deleted_short_name, deleted_file_stem) if s}
     touched = []
     for paper in get_all_papers(papers_dir):
+        pid = coerce_id(paper.get("id"))
+        if pid is None or pid == deleted_id:
+            continue
+        fresh = _fresh_paper(paper, papers_dir)
+        if fresh is None:
+            continue
+        paper = fresh            # cleanup rewrites survivors whole-file
         pid = coerce_id(paper.get("id"))
         if pid is None or pid == deleted_id:
             continue

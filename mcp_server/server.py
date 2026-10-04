@@ -46,11 +46,20 @@ _index_init_lock: Optional[asyncio.Lock] = None
 
 # Tools whose handlers touch the vector store. cite_verify / paper_citations
 # are network tools and must not trigger a model download just for being the
-# first thing the user calls.
+# first thing the user calls. paper_find_related / paper_search_by_method are
+# deliberately NOT here: they walk cross_refs / get_all_papers (markdown on
+# disk) and would otherwise pay — and be blocked by — a 400 MB model init they
+# never use.
 _INDEX_TOOLS = frozenset({
-    "paper_search", "paper_find_related", "paper_search_by_method",
-    "paper_index", "paper_remove", "paper_index_stats",
+    "paper_search", "paper_index", "paper_remove", "paper_index_stats",
 })
+
+# The subset that cannot function without a live store. When the deferred init
+# fails only these refuse service: paper_index / paper_remove degrade on
+# purpose (the durable vault write happens first, the vector part is wrapped
+# in try/except), so a broken store must not make them unavailable — that
+# contradicted their own graceful-degradation design.
+_REQUIRE_STORE = frozenset({"paper_search", "paper_index_stats"})
 
 
 def _init_index_sync():
@@ -422,7 +431,13 @@ async def handle_paper_index(params: dict) -> str:
         return json.dumps({"error": f"Invalid parameters: {e}"})
 
     paper_dict = input_data.model_dump()
-    is_update = paper_dict.get("paper_id") is not None
+    # The model's field is `paper_id`; create_paper_file reads `id`. Without
+    # this rename an explicit paper_id was invisible downstream — every
+    # "update" silently allocated a NEW id and wrote a duplicate note while
+    # the reply claimed 「论文已更新」. Key-name drift across the handler/
+    # parser boundary is exactly what schema cross-checks cannot see.
+    paper_dict["id"] = paper_dict.pop("paper_id")
+    is_update = paper_dict["id"] is not None
 
     # normalize_relations is forgiving: a malformed entry is dropped so one
     # typo can never break the write. Dropping silently, however, means the
@@ -433,7 +448,7 @@ async def handle_paper_index(params: dict) -> str:
     try:
         filepath = create_paper_file(paper_dict)
     except Exception as e:
-        return json.dumps({"error": f"创建论文文件失败: {e}"})
+        return json.dumps({"error": _sanitize_error(f"创建论文文件失败: {e}")})
 
     paper = parse_paper(filepath)
     if not paper:
@@ -487,8 +502,14 @@ async def handle_paper_index(params: dict) -> str:
         # Degrade instead of failing the call: the paper file and its relations
         # are already on disk; only semantic search is unavailable until the
         # index is rebuilt.
-        payload["vector_index"] = f"failed: {type(e).__name__}: {e}"
-        warnings.append(f"向量索引失败（论文文件与关系已正常写入，语义检索暂不可用）：{e}")
+        # Sanitized like the JSON-RPC branch: this text lands in the tool
+        # RESULT (a JSON-RPC *success*), so without it absolute vault paths
+        # leaked into shared transcripts exactly where the error branch said
+        # they must not.
+        payload["vector_index"] = _sanitize_error(
+            f"failed: {type(e).__name__}: {e}")
+        warnings.append(_sanitize_error(
+            f"向量索引失败（论文文件与关系已正常写入，语义检索暂不可用）：{e}"))
 
     if warnings:
         payload["warning"] = " ".join(warnings)
@@ -528,7 +549,8 @@ async def handle_paper_remove(params: dict) -> str:
         if rewritten:
             store.index_all_papers()
     except Exception as e:
-        warnings.append(f"向量索引未同步（论文文件与关系已正常删除）：{e}")
+        warnings.append(_sanitize_error(
+            f"向量索引未同步（论文文件与关系已正常删除）：{e}"))
 
     payload = {
         "status": "ok",
@@ -628,32 +650,30 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
             "result": {"tools": TOOLS}
         }
     elif method == "tools/call":
-        if STARTUP_ERROR:
+        tool_name = params.get("name", "")
+        tool_args = params.get("arguments", {})
+        # A failed init kills the tools that NEED the store, not the whole
+        # server: paper_get/paper_find_related/paper_search_by_method read
+        # markdown, cite_verify/paper_citations hit the network, and
+        # paper_index/paper_remove write files and degrade to
+        # `vector_index: failed` inside their payloads. Gating everything here
+        # contradicted the graceful-degradation design those handlers
+        # implement line by line.
+        if tool_name in _INDEX_TOOLS:
+            # First index-backed call of the session pays the one-time init
+            # (embedder load, vault scan). to_thread keeps the event loop free
+            # while a fresh-install model download grinds away in the worker.
+            await ensure_index_ready()
+        if STARTUP_ERROR and tool_name in _REQUIRE_STORE:
             # Answered as a tool error rather than a JSON-RPC one: this is a
             # broken installation, not a bad request, and the text is the whole
             # point — it is the only place the user will see why nothing works.
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {"code": -32000, "message": f"知识库不可用：{STARTUP_ERROR}"}
+                "error": {"code": -32000,
+                          "message": _sanitize_error(f"知识库不可用：{STARTUP_ERROR}")}
             }
-        tool_name = params.get("name", "")
-        tool_args = params.get("arguments", {})
-        if tool_name in _INDEX_TOOLS:
-            # First index-backed call of the session pays the one-time init
-            # (embedder load, vault scan). to_thread keeps the event loop free
-            # while a fresh-install model download grinds away in the worker.
-            await ensure_index_ready()
-            # The deferred init can fail (unopenable index, model that will
-            # not download). Report that instead of running the handler into
-            # the same wall and surfacing its raw traceback.
-            if STARTUP_ERROR:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32000,
-                              "message": _sanitize_error(f"知识库不可用：{STARTUP_ERROR}")}
-                }
         handler = TOOL_DISPATCH.get(tool_name)
         if not handler:
             return {
@@ -845,8 +865,19 @@ async def main():
             response = await handle_request(method, request_id, params)
             # A JSON-RPC notification has no id and must not be answered, no
             # matter what the dispatcher returned for it — this is the rule the
-            # handler above cannot enforce on its own.
+            # handler above cannot enforce on its own. The converse trap: a
+            # `notifications/…` method *carrying* an id is a request, not a
+            # notification (the dispatcher cannot tell the two apart and
+            # returns None for the prefix), and answering nothing left the
+            # caller waiting forever on a reply that would never come.
             if "id" in msg:
+                if response is None:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32601,
+                                  "message": f"Method not found: {method}"}
+                    }
                 write_response(response)
     finally:
         watcher_task.cancel()

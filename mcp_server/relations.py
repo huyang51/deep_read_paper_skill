@@ -130,9 +130,12 @@ def normalize_relations(raw) -> tuple[list[dict], list[str]]:
         if not isinstance(item, dict):
             warnings.append(f"relations[{i}] 不是映射，已忽略")
             continue
-        try:
-            target = int(item.get("target"))
-        except (TypeError, ValueError):
+        # coerce_id, not bare int(): int(True) == 1 silently pointed the
+        # relation at a DIFFERENT paper, and int(3.7) == 3 silently truncated
+        # the target — both with no warning at all (live repro 2026-10-04).
+        # Same口径 as frontmatter `id: yes` rejection above.
+        target = coerce_id(item.get("target"))
+        if target is None:
             warnings.append(f"relations[{i}] 缺少合法 target（论文 ID），已忽略")
             continue
         if target in seen:
@@ -144,8 +147,13 @@ def normalize_relations(raw) -> tuple[list[dict], list[str]]:
         rtype = rtype.strip() if isinstance(rtype, str) else ""
         direction = item.get("direction")
         direction = direction.strip() if isinstance(direction, str) else ""
+        note = item.get("note")
+        if note is not None and not isinstance(note, str):
+            # _clean_note would blank it without a word; the caller must see
+            # its note did not survive.
+            warnings.append(f"relations[{i}] 的 note 不是字符串（{type(note).__name__}），已置空")
         entries.append({"target": target, "type": rtype,
-                        "direction": direction, "note": _clean_note(item.get("note")),
+                        "direction": direction, "note": _clean_note(note),
                         **({"synced": True} if item.get("synced") else {})})
     return entries, warnings
 

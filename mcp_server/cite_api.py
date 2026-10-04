@@ -37,15 +37,22 @@ WORK_SELECT = "id,title,publication_year,doi,cited_by_count,authorships,primary_
 
 
 def _http_get_json(url: str, timeout: float = TIMEOUT_S):
-    """GET + JSON decode. Returns (data, error_str)."""
+    """GET + JSON decode. Returns (data, error_str); data is always a dict."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8")), None
+            data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code} for {url}"
     except Exception as e:  # URLError, timeout, JSON decode…
         return None, f"{type(e).__name__}: {e} for {url}"
+    if not isinstance(data, dict):
+        # Every consumer calls .get() on the payload (_brief(work),
+        # data["results"]). A gateway that answers 200 with `null`/`[]`/`false`
+        # used to raise AttributeError straight through the "never raises"
+        # contract — verdict="network_error" is the documented degradation.
+        return None, f"unexpected JSON shape ({type(data).__name__}) for {url}"
+    return data, None
 
 
 def _http_get_json_retry(url: str, tries: int = 3, backoff: float = 4.0):
