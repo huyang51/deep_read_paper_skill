@@ -49,11 +49,20 @@ def _label(paper: dict) -> str:
 
 
 def build_graph_data(papers: list) -> tuple:
-    """(nodes, edges, dead_targets) — JSON-ready structures for the page."""
+    """(nodes, edges, dead_targets, duplicate_ids) — JSON-ready structures.
+
+    duplicate_ids lists ``(pid, dropped_file, kept_file)``: two papers sharing
+    an id overwrite each other in the index, and the dropped file's relations
+    would vanish from the page without a word — the same detection
+    get_paper_by_id already warns about, so main() prints it.
+    """
     index = {}
+    dupes = []
     for p in papers:
         pid = coerce_id(p.get("id"))
         if pid is not None:
+            if pid in index:
+                dupes.append((pid, index[pid].get("file", "?"), p.get("file", "?")))
             index[pid] = p
 
     nodes = []
@@ -77,7 +86,14 @@ def build_graph_data(papers: list) -> tuple:
                 dead.add(tid)
                 continue
             rtype = entry.get("type", "")
-            direction = entry.get("direction", "peer")
+            direction = entry.get("direction") or ""
+            # normalize_relations always emits a direction key ("" when the
+            # frontmatter omitted it), so an earlier `get(..., "peer")` default
+            # never fired: missing and typo'd directions silently drew a
+            # one-way arrow. Only the two directed words may create one —
+            # anything else renders as an undirected peer line
+            # (validate_relations is what reports the bad value).
+            directed = direction in ("predecessor", "successor")
             # Arrow source→target runs later → earlier: "B is my predecessor"
             # means the arrow leaves me (the later paper) and lands on B.
             if direction == "successor":
@@ -87,17 +103,22 @@ def build_graph_data(papers: list) -> tuple:
             key = (min(src, dst), max(src, dst))
             edge = edges.setdefault(key, {
                 "source": src, "target": dst, "types": [],
-                "peer": direction == "peer", "notes": [],
+                "peer": not directed, "notes": [],
             })
-            if direction != "peer":
+            if directed:
+                # If the peer half of the declaration created this edge first,
+                # flipping only the flag would keep the stale src/dst — the
+                # arrow would render the wrong way round. The directed
+                # declaration carries the direction, so it owns both.
                 edge["peer"] = False
+                edge["source"], edge["target"] = src, dst
             if rtype and rtype not in edge["types"]:
                 edge["types"].append(rtype)
             note = entry.get("note", "")
             if note and note not in edge["notes"]:
                 edge["notes"].append(note)
     edge_list = sorted(edges.values(), key=lambda e: (e["source"], e["target"]))
-    return nodes, edge_list, dead
+    return nodes, edge_list, dead, dupes
 
 
 _HTML = r"""<!doctype html>
@@ -262,9 +283,14 @@ function tick() {
     const a = byId[e.source], b = byId[e.target];
     const dx = b.x - a.x, dy = b.y - a.y;
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    // Linear Hooke's law. The old extra `* d * 0.01` made F ∝ (d-150)·d:
+    // with ~150 nodes a stray wide pair fed back quadratically and every
+    // coordinate went Infinity→NaN by frame ~20 (blank canvas). tests/
+    // test_export_graph.py runs THIS tick under node to keep it provably
+    // stable at vault sizes the 2-node real vault never exercised.
     const f = (d - 150) * 0.02 * alpha;
-    a.vx += dx / d * f * d * 0.01; a.vy += dy / d * f * d * 0.01;
-    b.vx -= dx / d * f * d * 0.01; b.vy -= dy / d * f * d * 0.01;
+    a.vx += dx / d * f; a.vy += dy / d * f;
+    b.vx -= dx / d * f; b.vy -= dy / d * f;
   });
   DATA.nodes.forEach(n => {
     n.vx += (W() / 2 - n.x) * 0.003 * alpha;   // gentle gravity
@@ -395,10 +421,14 @@ def main(argv=None):
         print(f"vault 为空或不存在：{vault}", file=sys.stderr)
         return 1
 
-    nodes, edges, dead = build_graph_data(papers)
+    nodes, edges, dead, dupes = build_graph_data(papers)
     for tid in sorted(dead):
         print(f"警告：relations 指向不存在的论文 id={tid}，相应边已跳过"
               "（可运行 tools/verify_graph_arrows.py 查看）", file=sys.stderr)
+    for pid, dropped, kept in dupes:
+        print(f"警告：论文 id={pid} 重复（{dropped} 被 {kept} 覆盖），"
+              "被覆盖文件的 relations 不会出现在图中——先修复 id 再重导出",
+              file=sys.stderr)
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)

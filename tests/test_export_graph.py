@@ -7,6 +7,9 @@ either half makes the exported page lie quietly.
 """
 import io
 import json
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -35,7 +38,7 @@ class BuildGraphDataTest(unittest.TestCase):
                   _paper(2, relations=[
                        {"target": 1, "type": "method_similar",
                         "direction": "predecessor", "note": "n2"}])]
-        nodes, edges, dead = eg.build_graph_data(papers)
+        nodes, edges, dead, dupes = eg.build_graph_data(papers)
         self.assertEqual([n["id"] for n in nodes], [1, 2])
         self.assertEqual(len(edges), 1)
         e = edges[0]
@@ -48,7 +51,7 @@ class BuildGraphDataTest(unittest.TestCase):
                        {"target": 2, "type": "problem_related",
                         "direction": "peer"}]),
                   _paper(2)]
-        _, edges, _ = eg.build_graph_data(papers)
+        _, edges, _, _ = eg.build_graph_data(papers)
         self.assertTrue(edges[0]["peer"])
         self.assertEqual(edges[0]["source"], 1)  # no direction: as declared
 
@@ -56,7 +59,7 @@ class BuildGraphDataTest(unittest.TestCase):
         papers = [_paper(1, relations=[
                        {"target": 99, "type": "complementary",
                         "direction": "peer"}])]
-        nodes, edges, dead = eg.build_graph_data(papers)
+        nodes, edges, dead, dupes = eg.build_graph_data(papers)
         self.assertEqual(len(edges), 0)
         self.assertEqual(dead, {99})
         self.assertEqual(len(nodes), 1)  # the node still renders
@@ -64,8 +67,47 @@ class BuildGraphDataTest(unittest.TestCase):
     def test_label_uses_file_stem_not_short_name(self):
         papers = [_paper(1, short_name="FLMR v2")]
         papers[0]["file"] = "FLMR-v2.md"
-        nodes, _, _ = eg.build_graph_data(papers)
+        nodes, _, _, _ = eg.build_graph_data(papers)
         self.assertEqual(nodes[0]["label"], "FLMR-v2")
+
+    def test_duplicate_ids_are_reported_not_swallowed(self):
+        """Regression: the index build silently overwrote a repeated id, so the
+        dropped file's relations vanished from the page without a word."""
+        papers = [_paper(1, relations=[{"target": 2, "type": "problem_related",
+                                        "direction": "peer"}]),
+                  _paper(1)]
+        papers[0]["file"] = "First.md"
+        papers[1]["file"] = "Second.md"
+        nodes, _, _, dupes = eg.build_graph_data(papers)
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(dupes, [(1, "First.md", "Second.md")])
+
+    def test_missing_direction_renders_peer_not_an_arrow(self):
+        """Regression: normalize_relations always emits a direction key (""
+        when omitted), so the old get(..., "peer") default never fired and an
+        undeclared direction silently drew a one-way arrow."""
+        papers = [_paper(1, relations=[{"target": 2, "type": "complementary",
+                                        "direction": "", "note": ""}]),
+                  _paper(2)]
+        _, edges, _, _ = eg.build_graph_data(papers)
+        self.assertTrue(edges[0]["peer"])
+
+    def test_typo_direction_falls_back_to_undirected(self):
+        papers = [_paper(1, relations=[{"target": 2, "type": "method_similar",
+                                        "direction": "upstream"}]),
+                  _paper(2)]
+        _, edges, _, _ = eg.build_graph_data(papers)
+        self.assertTrue(edges[0]["peer"])
+
+    def test_directed_declaration_on_one_side_still_wins(self):
+        papers = [_paper(1, relations=[{"target": 2, "type": "evolutionary",
+                                        "direction": ""}]),
+                  _paper(2, relations=[{"target": 1, "type": "evolutionary",
+                                        "direction": "predecessor"}])]
+        _, edges, _, _ = eg.build_graph_data(papers)
+        self.assertEqual(len(edges), 1)
+        self.assertFalse(edges[0]["peer"])
+        self.assertEqual((edges[0]["source"], edges[0]["target"]), (2, 1))
 
 
 class RenderHtmlTest(unittest.TestCase):
@@ -77,7 +119,7 @@ class RenderHtmlTest(unittest.TestCase):
                        {"target": 3, "type": "problem_related",
                         "direction": "peer"}]),
                   _paper(3)]
-        nodes, edges, _ = eg.build_graph_data(papers)
+        nodes, edges, _, _ = eg.build_graph_data(papers)
         html = eg.render_html(nodes, edges)
         self.assertNotIn("__DATA__", html)          # every placeholder spliced
         payload = json.loads(html.split(
@@ -96,7 +138,7 @@ class RenderHtmlTest(unittest.TestCase):
         # the embedded payload's parsing.
         papers = [_paper(1)]
         papers[0]["title"] = 'ends with </script> and "quotes"'
-        nodes, edges, _ = eg.build_graph_data(papers)
+        nodes, edges, _, _ = eg.build_graph_data(papers)
         html = eg.render_html(nodes, edges)
         payload = json.loads(html.split(
             'type="application/json">')[1].split("</script>")[0])
@@ -128,11 +170,32 @@ class CliTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(out.exists())
             self.assertIn("404", err.getvalue())
+
+    def test_duplicate_id_warning_reaches_cli_stderr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "kb"
+            (vault / "papers").mkdir(parents=True)
+            for name in ("A.md", "B.md"):
+                (vault / "papers" / name).write_text(
+                    f"---\nid: 1\ntitle: {name}\nshort_name: {name[:1]}\n"
+                    "---\n\nB\n", encoding="utf-8")
+            out = Path(tmp) / "graph.html"
+            err = io.StringIO()
+            saved_err, sys.stderr = sys.stderr, err
+            try:
+                code = eg.main(["--vault", str(vault), "-o", str(out)])
+            finally:
+                sys.stderr = saved_err
+            self.assertEqual(code, 0)
+            self.assertIn("重复", err.getvalue())
             page = out.read_text(encoding="utf-8")
             payload = json.loads(page.split(
                 'type="application/json">')[1].split("</script>")[0])
-            self.assertEqual(len(payload["nodes"]), 2)
-            self.assertEqual(len(payload["edges"]), 1)
+            # one identity per id: relations target ids, two coexisting nodes
+            # would make every edge ambiguous — the duplicate must be loud,
+            # not graphed twice.
+            self.assertEqual(len(payload["nodes"]), 1)
+            self.assertEqual(len(payload["edges"]), 0)
 
     def test_main_empty_vault_is_exit_1(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,3 +208,60 @@ class CliTest(unittest.TestCase):
                 sys.stderr = saved_err
             self.assertEqual(code, 1)
             self.assertIn("vault 为空", err.getvalue())
+
+
+class SimulationStabilityTest(unittest.TestCase):
+    """Run the shipped force simulation under node, at vault scale.
+
+    Regression: the spring carried an extra `* d * 0.01`, so F ∝ (d-150)·d —
+    a quadratic feedback that is harmless in a 2-paper vault but sent every
+    coordinate to Infinity→NaN by frame ~20 at ~150 nodes, blanking the page.
+    tick() is lifted VERBATIM from _HTML: a coefficient change to the shipped
+    JS fails this test, which unit-side data tests cannot see.
+    """
+
+    @staticmethod
+    def _tick_source():
+        m = re.search(r"function tick\(\) \{.*?\n\}(?=\nfunction frame)",
+                      eg._HTML, re.S)
+        if not m:
+            raise AssertionError("tick() no longer findable in _HTML — "
+                                 "update this extractor with the template")
+        return m.group(0)
+
+    SCRIPT = """
+const N = 150, DATA = {nodes: [], edges: []};
+let seed = 12345;
+const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+                    return seed / 0x7fffffff; };
+for (let i = 0; i < N; i++)
+  DATA.nodes.push({id: i, x: 400 + 600 * rnd() - 300,
+                   y: 300 + 400 * rnd() - 200, vx: 0, vy: 0});
+for (let i = 0; i < N; i++)
+  for (let k = 0, m = 2 + Math.floor(rnd() * 3); k < m; k++) {
+    const j = Math.floor(rnd() * N);
+    if (j !== i) DATA.edges.push({source: i, target: j});
+  }
+const byId = {}; DATA.nodes.forEach(n => byId[n.id] = n);
+const W = () => 800, H = () => 600;
+let pinned = null, alpha = 1;
+__TICK__
+for (let k = 0; k < 200; k++) tick();
+const bad = DATA.nodes.filter(n => !Number.isFinite(n.x)
+  || !Number.isFinite(n.y)).length;
+const maxAbs = DATA.nodes.reduce((mx, n) =>
+  Math.max(mx, Math.abs(n.x), Math.abs(n.y)), 0);
+console.log(JSON.stringify({bad, maxAbs}));
+"""
+
+    def test_tick_is_stable_at_150_nodes(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not on PATH — JS side unexercised")
+        script = self.SCRIPT.replace("__TICK__", self._tick_source())
+        r = subprocess.run([node, "-e", script], capture_output=True,
+                           text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        out = json.loads(r.stdout.strip())
+        self.assertEqual(out["bad"], 0)
+        self.assertLess(out["maxAbs"], 1e5, "layout diverged")
