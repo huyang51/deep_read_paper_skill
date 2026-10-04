@@ -27,7 +27,7 @@ English | <a href="README_CN.md">简体中文</a>
 - 🖼️ **See** the figures — the text channel (page-by-page) and a visual channel (geometry-cropped figures, vision-checked, embedded in reports) work together
 - 🖥️ **Share** every finished report as a standalone HTML reading view — KaTeX math with a three-tier delivery (CDN multi-mirror → single-file offline embed → plain LaTeX source), booktabs tables, sticky TOC with active-section highlight, click-to-zoom figures, dark/light themes, print-ready — deterministic from the Markdown, never hand-written
 - 🧠 **Analyze** across 11 dimensions: 5 reader-side (problem genealogy, method lineage, intuitive interpretation, experiment design, limitations) + 3 reviewer-side (novelty audit, failure cases, rejection risk) + 3 deep-understanding (counterfactual verification, implicit assumptions audit, **synthesis judgment**)
-- 🧭 **Route by paper type** — method / theory / survey / benchmark / system / report — before the analysis runs: theory papers get a proof-structure audit (assumption necessity, proof completeness), surveys a coverage-audit and taxonomy-axis critique, datasets an annotation-consistency and leakage audit, systems a measurement-fairness audit. Type changes what each dimension asks and what counts as evidence — never how many dimensions run, and never whether every page gets read
+- 🧭 **Route by paper type** — method / theory / survey / benchmark / system / report — before the analysis runs: theory papers get a proof-structure audit (assumption necessity, proof completeness), surveys a coverage-audit and taxonomy-axis critique, datasets an annotation-consistency and leakage audit, systems a measurement-fairness audit. A per-type section-replacement table also swaps what each report section *contains* (surveys get taxonomy audits where methods get tensor-shape tables; theory walks a proof instead of an input→output pipeline) — questions follow the routing table, section carriers follow the replacement table. Type never reduces how many dimensions run, and never relaxes the every-page-read rule
 - 📝 **Generate** structured interpretation reports with LaTeX formulas, data tables, and claim-evidence mapping
 - 💾 **Remember** in an Obsidian-compatible knowledge vault with YAML frontmatter, wikilinks, and ChromaDB embeddings
 - 🔗 **Connect** papers with declared semantics — every relation carries a type (method-similar / problem-related / complementary / evolutionary) and a direction (predecessor / successor / peer) in frontmatter. The reciprocal entry, the `related_papers` projection and the Obsidian graph edge are all derived from that declaration, so arrow direction follows the data instead of the order you happened to read the papers in
@@ -45,7 +45,7 @@ English | <a href="README_CN.md">简体中文</a>
 |---------|----------|
 | Reading papers is time-consuming; details fade | Structured dual output: detailed report + persistent memory entry |
 | Papers exist in isolation; hard to see the bigger picture | Cross-paper linking with Obsidian knowledge graph |
-| LLM summaries are shallow; miss nuance | 11-dimension analysis: 5 reader-side + 3 reviewer-side + 3 deep-understanding, routed by paper type (theory / survey / benchmark / system each get their own questions) |
+| LLM summaries are shallow; miss nuance | 11-dimension analysis: 5 reader-side + 3 reviewer-side + 3 deep-understanding, routed by paper type (theory / survey / benchmark / system each get their own questions *and* section formats) |
 | Knowledge lost between projects | Portable Obsidian vault, independent of Claude Code |
 | Can't find that paper from 3 months ago | ChromaDB semantic search + MCP tools |
 
@@ -193,6 +193,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > - Repo not inside `~/.claude/skills/` → everything installs cleanly but the skill never triggers, with no error anywhere (`deploy.py` checks this at the end)
 > - Forgot `conda activate paper-kb` → `pip install` lands in another Python, or tool commands hit system Python and fail with `ModuleNotFoundError`
 > - `python_cmd` points to system Python instead of the skill's env → MCP server and hooks die at startup (deploy's preflight prints `[WARN]`)
+> - Left a template value untouched in `settings.json` → `deploy.py` now refuses with `[ERROR]` when `vault_dir` / `project_dir` / `python_cmd` still equal the `settings.example.json` placeholders (the `python_cmd` placeholder used to register a "successful" MCP server that died at first launch — 2026-10-04 deploy audit)
 > - No `HF_ENDPOINT` set → the first model download stalls and a starting MCP server looks dead. Once the model is cached this step is gone for good: the server switches itself to offline loading and skips the HuggingFace hub check
 > - A large `verify_refs.py` batch answers `429` from row ~50 onward → OpenAlex's free one-time IP credits are spent (S2's keyless pool usually thins out at the same moment). The tool now trips a **circuit breaker** (stops querying after 3 consecutive 429s, keeps the rows visible as 🌐 with Retry-After). Do not re-run the whole batch: `python tools/verify_refs.py --refs refs.txt --out ledger.json --md table.md --resume` after the window resets — already-judged rows are carried over without spending quota; report-side, those rows stay 【外部核验不可用】, never "nonexistent"
 
@@ -340,6 +341,7 @@ deep_read_paper_skill/
 │   ├── render_report.py         #   md report → standalone HTML reading view (KaTeX CDN / cache / embed)
 │   ├── verify_refs.py           #   Batch existence gate for externally named works (§6 ledger)
 │   ├── verify_graph_arrows.py   #   Graph health: relation integrity + arrow direction + justification
+│   ├── export_graph.py          #   Vault → standalone interactive HTML graph (typed edges, arrows earlier → later like the Obsidian view; peers dashed)
 │   └── migrate_relations.py     #   Legacy vault → structured relations (dry-run by default)
 │
 ├── vault-template/              # Obsidian vault starter kit
