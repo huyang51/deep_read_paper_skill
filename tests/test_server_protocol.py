@@ -341,3 +341,28 @@ class ErrorSanitizationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IndexStatsSurfaceTest(unittest.TestCase):
+    """A malformed frontmatter .md used to be visible only in the server log:
+    its paper simply answered "not found" from every tool, and
+    paper_index_stats — the place a caller looks when the vault "should"
+    contain it — reported a clean vault. scan_errors must ride in the return."""
+
+    class _Store:
+        def get_stats(self):
+            return {"total_papers": 3}
+
+    def _run(self, errors):
+        with mock.patch.object(server, "get_store", lambda: self._Store()), \
+             mock.patch.object(server, "get_scan_errors", return_value=errors):
+            return json.loads(asyncio.run(server.handle_index_stats()))
+
+    def test_scan_errors_reach_the_tool_return(self):
+        out = self._run(["papers/Broken.md: while parsing a block mapping"])
+        self.assertEqual(out["total_papers"], 3)
+        self.assertEqual(out["scan_errors"], ["papers/Broken.md: while parsing a block mapping"])
+
+    def test_clean_scan_omits_the_key(self):
+        out = self._run([])
+        self.assertNotIn("scan_errors", out)

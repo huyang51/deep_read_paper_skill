@@ -16,7 +16,7 @@ from mcp_server.models import (
 )
 from mcp_server import cite_api
 from mcp_server.markdown_parser import (
-    coerce_id, get_paper_by_id, get_all_papers, extract_wikilinks,
+    coerce_id, get_paper_by_id, get_all_papers, get_scan_errors, extract_wikilinks,
     cleanup_after_deletion, create_paper_file, delete_paper_file, parse_paper,
     invalidate_papers_cache, sync_paper_relations,
 )
@@ -552,6 +552,12 @@ async def handle_paper_remove(params: dict) -> str:
 
 async def handle_index_stats(params: dict = None) -> str:
     stats = get_store().get_stats()
+    # Frontmatter parse failures only reached the logger: one malformed .md
+    # made its paper vanish as "not found" everywhere with zero diagnostic,
+    # and stats is where a caller looks when the vault "should" have it.
+    scan_errors = get_scan_errors()
+    if scan_errors:
+        stats["scan_errors"] = scan_errors
     return json.dumps(stats, ensure_ascii=False, indent=2)
 
 
