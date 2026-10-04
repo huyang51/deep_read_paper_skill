@@ -40,7 +40,7 @@ sys.path.insert(0, str(SKILL_DIR))
 from mcp_server.config import PAPERS_DIR
 from mcp_server.markdown_parser import create_paper_file, parse_paper, sync_paper_relations
 from mcp_server.chroma_store import ChromaStore
-from mcp_server.relations import relations_of
+from mcp_server.relations import relations_of, normalize_relations
 
 
 def main():
@@ -91,12 +91,23 @@ def main():
         raw_relations = args.relations
         candidate = Path(raw_relations)
         if candidate.is_file():
-            raw_relations = candidate.read_text(encoding="utf-8")
+            raw_relations = candidate.read_text(encoding="utf-8-sig")
         try:
             relations = json.loads(raw_relations)
         except json.JSONDecodeError as e:
             print(json.dumps({"status": "error",
                               "message": f"--relations 不是合法 JSON：{e}"},
+                             ensure_ascii=False))
+            sys.exit(1)
+        # Valid JSON can still carry invalid ENTRIES: normalize_relations drops
+        # them (non-mapping rows, missing/bool/truncated targets), and
+        # create_paper_file discards the warning tuple — so without this check
+        # the CLI promised exit 1 for "malformed --relations" while quietly
+        # writing `"status": "ok"` with the relations evaporated.
+        _, rel_warns = normalize_relations(relations)
+        if rel_warns:
+            print(json.dumps({"status": "error",
+                              "message": "--relations 有条目不合法：" + "；".join(rel_warns)},
                              ensure_ascii=False))
             sys.exit(1)
 

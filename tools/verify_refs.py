@@ -243,7 +243,16 @@ def build_ledger(refs, delay: float = 0.6, max_n: int = 60, verify=None):
                 result = {"verdict": "network_error", "matches": [],
                           "notes": [f"{type(exc).__name__}: {exc}"]}
             gate = classify(result, ref.get("author", ""), ref.get("year"))
-        best = (result.get("matches") or [None])[0] or {}
+        # The gate reasons about _evidence()'s candidate (the author-matched
+        # one); the ledger row — and the §6 table rendered from it — must show
+        # THE SAME candidate, or an exists_ok verdict presents the lookalike's
+        # venue/year/citations as the library record and invents a year note
+        # about the wrong paper (live repro 2026-10-04: fake 53-cite record on
+        # top of the real Transformer row). matches[0] only survives as the
+        # fallback when NOTHING reaches SIM_STRONG: that row is unresolved
+        # anyway, and "closest thing found" is still useful evidence there.
+        best = _evidence(result, ref.get("author", "")) \
+            or ((result.get("matches") or [None])[0] or {})
         entries.append({
             "title": title or ref.get("doi") or ref.get("arxiv_id")
                      or ref.get("url") or "(无标题)",

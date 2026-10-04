@@ -259,5 +259,51 @@ class MainTest(unittest.TestCase):
         self.assertEqual(vr.main(["--refs", str(bad)]), 1)
 
 
+class GateLedgerConsistencyTest(unittest.TestCase):
+    """The candidate-pool fix (2026-09-29) reached classify()/gate_note(), but
+    build_ledger kept storing matches[0] — so an exists_ok row RENDERED the
+    lookalike as the library record and invented a year note about the wrong
+    paper (re-found by the 2026-10-04 audit: 假论文 venue/被引 53 上了 §6 表)."""
+
+    def _pool(self):
+        lookalike = {"openalex_id": "W9", "title": "Is Attention All You Need?",
+                     "year": 2024, "venue": "FakeVenue", "doi": "",
+                     "cited_by_count": 53, "authors": ["Patrick Mineault"],
+                     "similarity": 0.90, "author_match": False, "year_match": False}
+        real = {"openalex_id": "W2", "title": "Attention Is All You Need",
+                "year": 2017, "venue": "NeurIPS", "doi": "10.5/r",
+                "cited_by_count": 90000, "authors": ["Ashish Vaswani"],
+                "similarity": 0.78, "author_match": True, "year_match": True}
+        return {"verdict": "probable", "matches": [lookalike, real], "notes": []}
+
+    def test_exists_ok_row_shows_the_judged_record(self):
+        refs = [{"title": "Attention Is All You Need", "author": "Vaswani",
+                 "year": 2017, "doi": "", "arxiv_id": "", "url": ""}]
+        ledger = vr.build_ledger(refs, delay=0, verify=lambda **kw: self._pool())
+        entry = ledger["entries"][0]
+        self.assertEqual(entry["gate"], "exists_ok")
+        self.assertEqual(entry["match"]["title"], "Attention Is All You Need")
+        cell = vr._record_cell(entry)
+        self.assertIn("NeurIPS", cell)
+        self.assertNotIn("FakeVenue", cell)
+        self.assertNotIn("库记录年份", vr._short_note(entry),
+                         "年份注记必须基于门实际判定的那条记录")
+
+    def test_weak_candidate_still_rendered_when_unresolved(self):
+        """The SIM_STRONG-miss fallback keeps "closest thing found" visible —
+        the row is unresolved either way."""
+        weak = {"openalex_id": "W3", "title": "Whatever", "year": None,
+                "venue": "arXiv", "doi": "", "cited_by_count": 1,
+                "authors": ["X"], "similarity": 0.42, "author_match": False,
+                "year_match": False}
+        result = {"verdict": "not_found", "matches": [weak], "notes": []}
+        refs = [{"title": "Nonexistent Deep Dive", "author": "", "year": None,
+                 "doi": "", "arxiv_id": "", "url": ""}]
+        ledger = vr.build_ledger(refs, delay=0, verify=lambda **kw: result)
+        entry = ledger["entries"][0]
+        self.assertEqual(entry["gate"], "unresolved")
+        self.assertIn("弱匹配", vr._record_cell(entry))
+
+
 if __name__ == "__main__":
     unittest.main()

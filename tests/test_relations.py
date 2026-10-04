@@ -549,6 +549,65 @@ class ArrowCliTest(TempVaultCase):
         self.assertEqual(r.returncode, 2)
         self.assertNotIn("Checking", r.stdout)  # the check must not have started
 
+    def test_link_inside_newer_papers_section_is_flagged(self):
+        """2026-10-04 audit blind spot: [[Old]] INSIDE the NEWER paper's own
+        后续引用 section drew the wrong-way edge in Obsidian, yet the tool —
+        whose only job is that edge — stayed silent about the culprit while
+        blaming the innocent older paper for "lacking" a section."""
+        self._make(1, "Old", 2015, body="独立正文。")
+        self._make(2, "New", 2021, body="正文。\n\n## 后续引用\n\n- [[Old]]",
+                   related=[1])
+
+        r = self._run()
+        self.assertEqual(r.returncode, 1, msg=r.stdout + r.stderr)
+        self.assertIn("inside its own", r.stdout)
+
+    def test_warning_only_vault_exits_zero(self):
+        """Docstring contract: exit 1 = something FAILED. A pure ⚠️ note
+        (duplicate mention outside the section) must not report failure —
+        while relation ⚠️ had already been excluded from the verdict, making
+        the same mark count twice under opposite rules."""
+        self._make(1, "Old", 2023,
+                   body="顺手提到 [[New]] 一次。\n\n## 后续引用\n\n- [[New]]",
+                   related=[2])
+        self._make(2, "New", 2025, body="与 **Old** 互补。")
+
+        r = self._run()
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("⚠️", r.stdout)
+        self.assertNotIn("❌ Arrow", r.stdout)
+
+
+class QuotedIdMigrationTest(unittest.TestCase):
+    """migrate_relations must normalize ids like every reader around it —
+    `id: \"5\"` (a hand edit) otherwise silently split a pair's pins apart."""
+
+    def _p(self, pid, short, year, **kw):
+        d = {"id": pid, "title": f"T{short}", "short_name": short, "year": year,
+             "method_category": "IR", "problem_domain": "d", "keywords": [],
+             "body": "B.", "file": f"{short}.md"}
+        d.update(kw)
+        return d
+
+    def test_set_type_pins_both_sides_when_id_is_quoted(self):
+        five = self._p("5", "Five", 2024, related_papers=[7])
+        seven = self._p(7, "Seven", 2023, related_papers=[5])
+        plans = M.build_plan([five, seven], {5: "complementary"})
+        self.assertIn(5, plans, "plan 键必须是 coerce 后的 int，否则钉不住自己")
+        t5 = [e for e in plans[5]["proposed"] if e["target"] == 7]
+        t7 = [e for e in plans[7]["proposed"] if e["target"] == 5]
+        self.assertTrue(t5 and t7)
+        self.assertEqual(t5[0]["type"], "complementary")
+        self.assertEqual(t7[0]["type"], "complementary")
+
+    def test_self_followup_link_is_not_recovered_as_a_relation(self):
+        """[[Nine]] inside Nine's own section used to "recover" a successor
+        relation of the paper to ITSELF and --apply would write it."""
+        nine = self._p("9", "Nine", 2022, body="B.\n\n## 后续引用\n\n- [[Nine]]")
+        plan = M.plan_for(nine, M.relation_index([nine]))
+        self.assertNotIn(9, [e["target"] for e in plan["entries"]])
+        self.assertNotIn(9, plan["recovered"])
+
 
 class MigrateCliTest(TempVaultCase):
     """The migration CLI: inference, overrides and the writes they produce."""

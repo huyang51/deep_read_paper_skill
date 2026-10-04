@@ -13,8 +13,9 @@ pixels. The recipe:
   2. Proximity clustering (transitive merge at --pad pt) reconstructs the
      extent of a vector figure built from dozens of primitives.
   3. Caption blocks are located by regex (Figure|Fig.|图 <N> <colon/dot>).
-     Each caption anchors to the nearest cluster BELOW it (or, rarely, above
-     it) that horizontally overlaps the caption.
+     Each caption anchors to the nearest cluster ABOVE it (or, rarely, below
+     it, for venues that print captions on top) that horizontally overlaps the
+     caption — the same order anchor_captions() documents.
   4. crop = (cluster ∪ caption) + pad, rendered to PNG at --dpi, capped to
      --max-px per side (vision models lose little above ~2000 px/side).
 Same figure key on one page (Figure 4(a) + 4(b)) merges into ONE crop.
@@ -312,7 +313,11 @@ def extract_figures(pdf_path, outdir, pages=None, dpi=300.0, pad=6.0,
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     doc = fitz.open(str(pdf_path))
-    stem = prefix or re.sub(r"[^\w\-]+", "_", pdf_path.stem)[:40]
+    # --prefix is interpolated into the filename exactly like --name is; the
+    # default branch sanitized it, but an explicit prefix bypassed that and
+    # "../../evil" wrote PNGs OUTSIDE --outdir (live repro 2026-10-04). Same
+    # substitution for both paths — the comment below can now say so truthfully.
+    stem = re.sub(r"[^\w\-]+", "_", str(prefix or pdf_path.stem))[:40]
 
     manifest = {
         "pdf": pdf_path.resolve().as_posix(),
@@ -481,8 +486,12 @@ def main(argv=None):
         return 1
 
     manual = None
-    if args.rect or args.page:
-        if not (args.rect and args.page):
+    # `or` made --page 0 falsy: manual mode silently fell through to the FULL
+    # automatic extraction the user had NOT asked for. is-not-None for the
+    # switches; page 0 then hits the 1..len(doc) range check in
+    # extract_figures(manual=) and fails LOUDLY instead of quietly.
+    if args.rect is not None or args.page is not None:
+        if not (args.rect and args.page is not None):
             print("[ERROR] manual mode needs BOTH --page and --rect")
             return 1
         try:
@@ -490,6 +499,11 @@ def main(argv=None):
             assert len(rect4) == 4
         except (ValueError, AssertionError):
             print("[ERROR] --rect must be 'x0,y0,x1,y1' (4 numbers, pt)")
+            return 1
+        if rect4[0] >= rect4[2] or rect4[1] >= rect4[3]:
+            # A reversed rect crops to 0×0 px and exited 0 with a broken PNG.
+            print("[ERROR] --rect 需要 x0<x1 且 y0<y1（左上角、右下角），"
+                  f"收到 {rect4}")
             return 1
         manual = (args.page, rect4, args.name)
 

@@ -50,9 +50,9 @@ from mcp_server.markdown_parser import (  # noqa: E402
     update_paper_relations,
 )
 from mcp_server.relations import (  # noqa: E402
-    RELATION_TYPE_CN, RELATION_TYPES, derive_direction, derive_relations,
-    describe, infer_type, relation_index, relation_targets, relations_of,
-    validate_relations, ERROR, WARN,
+    RELATION_TYPE_CN, RELATION_TYPES, coerce_id, derive_direction,
+    derive_relations, describe, infer_type, relation_index, relation_targets,
+    relations_of, validate_relations, ERROR, WARN,
 )
 
 
@@ -108,7 +108,11 @@ def plan_for(paper: dict, index: dict) -> dict:
     shorts = {p.get("short_name", ""): pid for pid, p in index.items() if p.get("short_name")}
     for link in followup_links:
         target = shorts.get(link)
-        if target is None or target == paper.get("id"):
+        # coerce_id on BOTH sides of the comparison: a hand-edited `id: "9"`
+        # made paper.get("id") the string "9" while targets are ints, so the
+        # self-link check silently failed and the migration "recovered" a
+        # successor relation of a paper to ITSELF (live repro 2026-10-04).
+        if target is None or target == coerce_id(paper.get("id")):
             # A link to a paper that is not in the vault: an Obsidian ghost node.
             continue
         if target in kept:
@@ -156,7 +160,13 @@ def build_plan(papers: list[dict], overrides: dict = None) -> dict:
     index = relation_index(papers)
     plans = {}
     for paper in papers:
-        pid = paper.get("id")
+        # overrides (from --set-type) and entry targets are ints; a raw
+        # frontmatter id can be the string "5" — uncoerced, overrides.get(pid)
+        # missed its own row (one-sided pin → the reciprocal reverted the
+        # class, and the "unused override" warning never fired either).
+        pid = coerce_id(paper.get("id"))
+        if pid is None:
+            continue
         existing = relations_of(paper)
         plan = plan_for(paper, index)
         entries = plan["entries"]
@@ -273,7 +283,8 @@ def main(argv=None) -> int:
         if args.out:
             Path(args.out).write_text(json.dumps(issues, ensure_ascii=False, indent=2),
                                       encoding="utf-8")
-        return 1 if errors else 0
+        # Docstring contract: 2 = warnings remain (1 was reserved for errors).
+        return 1 if errors else (2 if issues else 0)
 
     plans = build_plan(papers, overrides)
     conflict = find_override_conflict(plans, overrides)

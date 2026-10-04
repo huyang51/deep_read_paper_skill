@@ -204,6 +204,21 @@ def verify_arrows(papers: list[dict]) -> list[str]:
                                 f"This creates a wrong-direction graph edge (new→old). "
                                 f"Replace with **bold** text."
                             )
+                        else:
+                            # INSIDE the section the tool used to wave this
+                            # through — but 后续引用 means "papers that came
+                            # AFTER me", and Obsidian happily draws the edge
+                            # [{cur_short}] → [{rel_short}] (new→old) wherever
+                            # the link sits. Live repro 2026-10-04: the culprit
+                            # got zero complaints while the innocent older
+                            # paper was told it "lacks" a section.
+                            issues.append(
+                                f"❌ [{cur_short}] (year {new_year}, NEWER) carries "
+                                f"[[{rel_short}]] (year {rel_year}, OLDER) inside its "
+                                f"own ## 后续引用 section — that section is for papers "
+                                f"that came after it. The edge belongs in [{rel_short}]'s "
+                                f"section instead (or drop it if this pair is declared)."
+                            )
                     else:
                         # No 后续引用 section, but has [[older]] wikilink - wrong
                         issues.append(
@@ -269,15 +284,26 @@ def main():
 
     # Check 2: arrow direction (old → new)
     arrow_issues = verify_arrows(papers)
+    # The old code printed an ❌ header and exited 1 over a list of PURE
+    # warnings (⚠️ duplicate-edge notes) while relation ⚠️ were excluded from
+    # the verdict entirely — the same mark counted twice by opposite rules.
+    # Docstring contract: exit 1 only when something FAILED.
+    arrow_fail = [i for i in arrow_issues if "❌" in i]
+    arrow_warn = [i for i in arrow_issues if "❌" not in i]
     if arrow_issues:
-        print(f"❌ Arrow direction issues ({len(arrow_issues)}):\n")
+        if arrow_fail:
+            print(f"❌ Arrow direction issues ({len(arrow_fail)}):\n")
+        else:
+            print(f"⚠️  Arrow direction notes ({len(arrow_warn)}):\n")
         for issue in arrow_issues:
             print(f"  {issue}\n")
 
-    if not relevance_issues and not arrow_issues and not relation_errors:
+    if not relevance_issues and not arrow_fail and not relation_errors:
         print("✅ All graph arrows follow the old→new direction rule,")
         print("   every related_papers entry has a body justification,")
         print("   and the structured relations are consistent!")
+        if arrow_warn:
+            print(f"   （另有 {len(arrow_warn)} 条 ⚠️ 提示不影响结论，可择机处理）")
         sys.exit(0)
 
     print()
