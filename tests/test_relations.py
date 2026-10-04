@@ -12,6 +12,8 @@ ChromaDB. The invariants that must never regress:
 
 Run from repo root:  python -m unittest discover -s tests -v
 """
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -491,6 +493,61 @@ class VaultTest(TempVaultCase):
         raw = path.read_bytes()
         self.assertIn(b"relations:", raw)                       # it was rewritten
         self.assertEqual(raw.count(b"\n"), raw.count(b"\r\n"))  # ...and stayed CRLF
+
+
+class ArrowCliTest(TempVaultCase):
+    """verify_graph_arrows as a *process*, on a GBK console.
+
+    The tool had no stdout.reconfigure and no argparse, so a fully consistent
+    vault crashed with UnicodeEncodeError on the ✅ line (exit 1 — the exact
+    opposite of its verdict), and `--help` silently ran the check instead.
+    In-process calls can't reproduce either: the encoding is fixed at import
+    and main() ignores argv. Hence subprocess with PYTHONIOENCODING=gbk,
+    which forces the pre-fix crash even on UTF-8 dev machines.
+    """
+
+    TOOL = Path(__file__).resolve().parents[1] / "tools" / "verify_graph_arrows.py"
+
+    def _run(self, *args):
+        env = dict(os.environ, PAPER_KB_VAULT_DIR=str(self.vault),
+                   PYTHONIOENCODING="gbk")
+        return subprocess.run([sys.executable, str(self.TOOL)] + list(args),
+                              capture_output=True, text=True, timeout=120, env=env,
+                              encoding="utf-8", errors="replace")
+
+    def test_clean_vault_exits_zero_under_gbk(self):
+        self._make(1, "Old", 2023, body="与 **New** 互补。\n\n## 后续引用\n\n- [[New]]",
+                   related=[2])
+        self._make(2, "New", 2025, body="与 **Old** 互补。", related=[1])
+
+        r = self._run()
+        self.assertNotIn("UnicodeEncodeError", r.stderr)
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("✅", r.stdout)
+
+    def test_broken_vault_reports_under_gbk_without_crashing(self):
+        """A missing reciprocal must surface as the tool's own ❌/How-to-fix
+        output, not as a traceback — the exit code alone can't tell the two
+        apart (both are 1), so assert the report actually reached stdout."""
+        self._make(1, "Old", 2023, body="与 **New** 互补。")
+        self._make(2, "New", 2025, body="与 **Old** 互补。", relations=[
+            {"target": 1, "type": "evolutionary", "direction": "predecessor",
+             "note": "扩展了它"}])
+
+        r = self._run()
+        self.assertNotIn("UnicodeEncodeError", r.stderr)
+        self.assertEqual(r.returncode, 1, msg=r.stdout + r.stderr)
+        self.assertIn("How to fix", r.stdout)
+
+    def test_help_is_usage_not_a_run(self):
+        r = self._run("--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("usage", r.stdout.lower())
+
+    def test_unknown_flag_is_rejected(self):
+        r = self._run("--bogus")
+        self.assertEqual(r.returncode, 2)
+        self.assertNotIn("Checking", r.stdout)  # the check must not have started
 
 
 class MigrateCliTest(TempVaultCase):

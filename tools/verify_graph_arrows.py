@@ -18,10 +18,17 @@ Three checks, in descending authority:
 
 Run this after indexing a new paper. Exits 0 if clean, 1 if anything failed.
 """
+import argparse
 import sys
 import re
 from pathlib import Path
 from typing import Optional
+
+# Ensure UTF-8 output on Windows (GBK console mangles CJK + arrows): every
+# success/failure line here carries ✅/❌/⚠️, and a UnicodeEncodeError on the
+# *clean* verdict crashed with exit 1 — the exact opposite of what it said.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
@@ -220,6 +227,14 @@ def verify_arrows(papers: list[dict]) -> list[str]:
 
 
 def main():
+    # argparse, not bare sys.argv: the tool used to run the full check even on
+    # `--help` (then crash on the GBK console). Unknown flags must be rejected
+    # up front, not silently ignored while a vault check reports success.
+    argparse.ArgumentParser(
+        description="校验 vault 图谱：结构化 relations、箭头方向、related_papers 依据。"
+                    "退出码 0=干净, 1=有问题。",
+    ).parse_args()
+
     papers = get_all_papers()
     if not papers:
         print("No papers found in vault.")
