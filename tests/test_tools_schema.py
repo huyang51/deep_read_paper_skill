@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mcp_server import models  # noqa: E402
-from mcp_server.relations import RELATION_TYPES  # noqa: E402
+from mcp_server.relations import DIRECTIONS, RELATION_TYPES  # noqa: E402
 from mcp_server.server import TOOLS  # noqa: E402
 
 # tool name -> the pydantic model that validates its params
@@ -115,6 +115,21 @@ class SchemaDriftTest(unittest.TestCase):
                 enum = by_name[tool]["inputSchema"]["properties"][prop].get("enum")
                 self.assertIsNotNone(enum, f"{tool}.{prop}: schema has no enum")
                 self.assertEqual(sorted(enum), sorted(values))
+
+    def test_nested_relation_schema_matches_the_vocabulary(self):
+        """The relations ITEMS schema is what teaches the agent the relation
+        contract; the model stays list[dict] on purpose (normalize_relations
+        forgives one typo instead of failing the whole write), so the nested
+        schema has no model twin to diff against — pin it to the vocabulary
+        tables, the same single source the vault writers use."""
+        by_name = {t["name"]: t for t in TOOLS}
+        items = by_name["paper_index"]["inputSchema"]["properties"] \
+            ["relations"]["items"]
+        props = items["properties"]
+        self.assertEqual(set(props), {"target", "type", "direction", "note"})
+        self.assertEqual(sorted(props["type"]["enum"]), sorted(RELATION_TYPES))
+        self.assertEqual(sorted(props["direction"]["enum"]), sorted(DIRECTIONS))
+        self.assertEqual(set(items["required"]), {"target", "type", "direction"})
 
     def test_schema_carries_every_model_constraint(self):
         """Anything the model enforces (ge/le/pattern) must also be visible

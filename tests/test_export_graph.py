@@ -70,6 +70,28 @@ class BuildGraphDataTest(unittest.TestCase):
         nodes, _, _, _ = eg.build_graph_data(papers)
         self.assertEqual(nodes[0]["label"], "FLMR-v2")
 
+    def test_self_loop_is_skipped(self):
+        """A relation targeting the declaring paper is noise, not an edge —
+        and must not count as a dead target either."""
+        papers = [_paper(1, relations=[{"target": 1, "type": "complementary",
+                                        "direction": "peer"}]),
+                  _paper(2)]
+        nodes, edges, dead, _ = eg.build_graph_data(papers)
+        self.assertEqual(edges, [])
+        self.assertEqual(dead, set())
+
+    def test_unknown_type_survives_with_fallback_color(self):
+        """validate_relations reports bad types; the page must still render —
+        the JS looks the type up with a `|| __FALLBACK__` and the raw value
+        stays visible in the panel so the user can find the typo."""
+        papers = [_paper(1, relations=[{"target": 2, "type": "fancy_new",
+                                        "direction": "successor"}]),
+                  _paper(2)]
+        nodes, edges, _, _ = eg.build_graph_data(papers)
+        self.assertEqual(edges[0]["types"], ["fancy_new"])
+        html = eg.render_html(nodes, edges)
+        self.assertIn(eg.FALLBACK_COLOR, html)
+
     def test_duplicate_ids_are_reported_not_swallowed(self):
         """Regression: the index build silently overwrote a repeated id, so the
         dropped file's relations vanished from the page without a word."""

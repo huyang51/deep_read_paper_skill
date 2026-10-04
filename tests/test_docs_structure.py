@@ -6,6 +6,7 @@ loudly if the single-source contract drifts: a dimension renamed or dropped
 on one side, the pointer removed, or the orchestration doc still pasting from
 the wrong file.
 """
+import re
 import unittest
 from pathlib import Path
 
@@ -62,6 +63,34 @@ class DimensionsSplitTest(unittest.TestCase):
         self.assertNotIn("### 2.1 问题溯源分析", skill)
         # the pointer may name the table; the table itself must not be here
         self.assertNotIn("| 类型 | 识别信号（分诊可判） | 维度调整 |", skill)
+
+    def test_mapping_table_and_dimensions_md_have_the_same_eleven(self):
+        """The SKILL mapping table and dimensions.md are hand-maintained on
+        opposite sides of the split — set equality catches a rename or drop
+        on one side that the exists-checks on both sides would pass."""
+        skill = _read("SKILL.md")
+        dims = _read("references", "dimensions.md")
+        mapped = set(re.findall(r"(?m)^\| (2\.\d+) \|", skill))
+        present = set(re.findall(r"(?m)^### (2\.\d+) ", dims))
+        self.assertEqual(mapped, present)
+        self.assertEqual(len(mapped), 11)
+
+    def test_no_detail_pointer_routes_back_to_skill(self):
+        """"细则见 SKILL.md …" survived the split once (README_CN 类型路由) —
+        any doc that says "details in SKILL.md Phase 2" reintroduces the
+        second source the split removed."""
+        for name in ("README.md", "README_CN.md", "SKILL.md",
+                     "references/report_template.md",
+                     "references/orchestration_prompts.md"):
+            with self.subTest(doc=name):
+                self.assertNotRegex(
+                    _read(name), r"细则见[^。\n]{0,40}SKILL\.md[^。\n]{0,20}Phase 2")
+
+    def test_report_template_sources_from_dimensions_md(self):
+        """The template's 类型变体/基座核验 rules cite the single source."""
+        tmpl = _read("references", "report_template.md")
+        self.assertIn("references/dimensions.md", tmpl)
+        self.assertNotIn("SKILL.md` Phase 2 原文", tmpl)
 
     def test_orchestrator_sources_from_dimensions_md(self):
         orch = _read("references", "orchestration_prompts.md")
