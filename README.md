@@ -47,7 +47,7 @@ English | <a href="README_CN.md">简体中文</a>
 | Papers exist in isolation; hard to see the bigger picture | Cross-paper linking with Obsidian knowledge graph |
 | LLM summaries are shallow; miss nuance | 11-dimension analysis: 5 reader-side + 3 reviewer-side + 3 deep-understanding, routed by paper type (theory / survey / benchmark / system each get their own questions *and* section formats) |
 | Knowledge lost between projects | Portable Obsidian vault, independent of Claude Code |
-| Can't find that paper from 3 months ago | ChromaDB semantic search + MCP tools |
+| Can't find that paper from 3 months ago | ChromaDB semantic search + 9 MCP tools (incl. external citation checks) |
 
 ---
 
@@ -195,6 +195,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > - `python_cmd` points to system Python instead of the skill's env → MCP server and hooks die at startup (deploy's preflight prints `[WARN]`)
 > - Left a template value untouched in `settings.json` → `deploy.py` now refuses with `[ERROR]` when `vault_dir` / `project_dir` / `python_cmd` still equal the `settings.example.json` placeholders (the `python_cmd` placeholder used to register a "successful" MCP server that died at first launch — 2026-10-04 deploy audit)
 > - No `HF_ENDPOINT` set → the first model download stalls and a starting MCP server looks dead. Once the model is cached this step is gone for good: the server switches itself to offline loading and skips the HuggingFace hub check
+> - `conda run -n paper-kb python …` on a path containing Chinese/special characters → **conda's own** report pipe crashes (`UnicodeEncodeError: 'gbk' …`), which looks like a skill failure but isn't (live case 2026-10-04). Activate the env and call `python …` directly, or keep the report path ASCII — the skill's own entry points all force UTF-8 output
 > - A large `verify_refs.py` batch answers `429` from row ~50 onward → OpenAlex's free one-time IP credits are spent (S2's keyless pool usually thins out at the same moment). The tool now trips a **circuit breaker** (stops querying after 3 consecutive 429s, keeps the rows visible as 🌐 with Retry-After). Do not re-run the whole batch: `python tools/verify_refs.py --refs refs.txt --out ledger.json --md table.md --resume` after the window resets — already-judged rows are carried over without spending quota; report-side, those rows stay 【外部核验不可用】, never "nonexistent"
 
 ### Configuration (`settings.json`)
@@ -319,6 +320,7 @@ deep_read_paper_skill/
 ├── settings.example.json        # Template for the above (tracked in git)
 ├── pyproject.toml               # Package metadata (`pip install -e .`)
 ├── deploy.py                    # One-click deployment (`paper-kb-deploy`)
+├── templates/                   # deploy.py render inputs (hooks' .claude-settings.json templates)
 ├── requirements.txt             # Dependencies (chromadb, pymupdf, watchfiles, pydantic)
 │
 ├── mcp_server/                  # MCP Server (ChromaDB + 9 tools)
@@ -327,6 +329,9 @@ deep_read_paper_skill/
 │   ├── markdown_parser.py       #   YAML frontmatter + relation sync (reciprocals, projection, graph edges)
 │   ├── relations.py             #   Relation rules: types, directions, reciprocity, validation
 │   ├── cross_refs.py            #   Cross-paper relationship discovery
+│   ├── indexing.py              #   Write-side index pipeline (file → ChromaDB + relation sync)
+│   ├── hf_offline.py            #   Offline embedding-model loading once cached (no Hub check)
+│   ├── console.py               #   Forced UTF-8 output — the Windows GBK shield shared by every entry point
 │   ├── config.py                #   Reads settings.json
 │   ├── models.py                #   Pydantic I/O models
 │   └── cite_api.py              #   OpenAlex/Semantic Scholar fact-checking client
@@ -345,11 +350,12 @@ deep_read_paper_skill/
 │   └── migrate_relations.py     #   Legacy vault → structured relations (dry-run by default)
 │
 ├── vault-template/              # Obsidian vault starter kit
-│   ├── .obsidian/               #   Graph + properties + Dataview config
-│   ├── index.md                 #   Dataview-powered dynamic index
-│   └── templates/               #   Paper memory & insight templates
+│   ├── .obsidian/               #   Graph + core-plugin config
+│   │   └── templates/           #     Paper memory & insight templates
+│   └── index.md                 #   Dataview-powered dynamic index
 │
 ├── references/                  # Report, memory & orchestration templates
+│   ├── dimensions.md            #   The 11 dimensions: questions, output formats, type-routing table, 🌐/ hard checks (single source for Phase 2)
 │   ├── report_template.md
 │   ├── memory_entry_template.md
 │   ├── orchestration_prompts.md #   Phase 2 multi-agent cards (ultra tier) + unified QA card
@@ -367,6 +373,7 @@ deep_read_paper_skill/
 ├── insights/        # Cross-paper innovation insights (auto-generated)
 ├── attachments/     # Per-paper figure crops (<short_name>/*.png + manifest.json)
 ├── index.md         # Dataview dynamic index
+├── .obsidian/       # Graph/plugin config + templates (seeded by bootstrap.py; --seed-obsidian tops up an existing vault)
 └── .chromadb/       # Vector database (auto-managed)
 ```
 
@@ -472,7 +479,7 @@ $env:MCP_TIMEOUT="60000"; claude
 <details>
 <summary><b>Q: Chinese search results are poor?</b></summary>
 
-The default embedding model (`paraphrase-multilingual-MiniLM-L12-v2`) supports both Chinese and English. If you previously had `all-MiniLM-L6-v2` configured (an older default), switch back to `paraphrase-multilingual-MiniLM-L12-v2` in `settings.json` and re-index.
+The default embedding model (`paraphrase-multilingual-MiniLM-L12-v2`) supports both Chinese and English. If you previously configured `all-MiniLM-L6-v2` (the no-torch ONNX fallback — never the shipped default), switch back to `paraphrase-multilingual-MiniLM-L12-v2` in `settings.json` and re-index.
 </details>
 
 <details>
@@ -517,7 +524,7 @@ Yes — modify the workflow in `SKILL.md`. Update the report template in `refere
 
 | Package | Version | Purpose |
 |---------|---------|-----|
-| `chromadb` | ≥0.4 | Semantic search vector store |
+| `chromadb` | ≥1.0,<2.0 | Semantic search vector store — 1.x is a hard floor: 0.x-era persisted indexes cannot be opened by 1.x (and vice versa), the schema changed |
 | `python-frontmatter` | ≥1.0 | YAML frontmatter parsing |
 | `pydantic` | ≥2.0 | MCP tool schema validation |
 | `watchfiles` | ≥0.20 | Auto-index on file changes |

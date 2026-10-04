@@ -191,6 +191,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > - `settings.json` 中 `python_cmd` 指向系统 Python 而非 skill 环境 → MCP server 与 hooks 启动即崩（`deploy.py` 的自检会 [WARN]）
 > - `settings.json` 里留了模板占位值没改 → `deploy.py` 现在对仍是 `settings.example.json` 原值的 `vault_dir` / `project_dir` / `python_cmd` 直接 **[ERROR] 拒跑**（`python_cmd` 占位值过去会"注册成功但首启即死"，2026-10-04 部署审计后升级）
 > - 没设 `HF_ENDPOINT` → 首次下载模型时卡住，MCP server 启动时像"死"了一样。模型一旦缓存到本地就不会再走这一步：server 会自己切到离线加载，跳过 HuggingFace 联网检查
+> - 用 `conda run -n paper-kb python …` 跑中文/特殊字符路径 → **conda 自己的**错误报告管道会 GBK 崩（`UnicodeEncodeError: 'gbk'…`），看起来像 skill 坏了其实不是（2026-10-04 实测）。先激活环境再直接 `python …`，或保持路径纯 ASCII——skill 自身的入口全部强制 UTF-8 输出
 > - `verify_refs.py` 大批量跑到第 ~50 行开始回 `429` → OpenAlex 免费额度是**每 IP 一次性 credit**（约百次查询；实测 2026-10-04），S2 无 key 池常同时枯竭。工具会自动**熔断**（连续 3 行 429 后停止发起查询，剩余行如实标 🌐 并带上 Retry-After）。别整批重跑：窗口重置后执行 `python tools/verify_refs.py --refs refs.txt --out ledger.json --md table.md --resume`——已判定行零配额沿用，只补跑失败行；报告侧这些行维持【外部核验不可用】，**不得写成"不存在"**
 
 ### 配置 (`settings.json`)
@@ -317,6 +318,7 @@ deep_read_paper_skill/
 ├── settings.example.json        # 上项模板（随仓库分发）
 ├── pyproject.toml               # 打包元数据（`pip install -e .`）
 ├── deploy.py                    # 一键部署到你的项目（`paper-kb-deploy`）
+├── templates/                   # deploy.py 的渲染输入（hooks 用的 .claude-settings.json 模板）
 ├── requirements.txt             # Python 依赖
 │
 ├── mcp_server/                  # MCP Server（ChromaDB 向量索引 + 9 个工具）
@@ -325,6 +327,9 @@ deep_read_paper_skill/
 │   ├── markdown_parser.py       #   YAML frontmatter + 关系同步（互指条目、投影、图谱边）
 │   ├── relations.py             #   关系规则层：类型/方向词表、互指、校验
 │   ├── cross_refs.py            #   跨论文关联发现
+│   ├── indexing.py              #   写侧索引管线（文件 → ChromaDB + 关系同步）
+│   ├── hf_offline.py            #   模型缓存后离线加载（跳过 Hub 联网检查）
+│   ├── console.py               #   强制 UTF-8 输出——全入口共用的 Windows GBK 防护
 │   ├── config.py                #   读取 settings.json
 │   ├── models.py                #   Pydantic 输入输出模型
 │   └── cite_api.py              #   OpenAlex/Semantic Scholar 外部核验客户端
@@ -343,11 +348,12 @@ deep_read_paper_skill/
 │   └── migrate_relations.py     #   旧 vault → 结构化 relations（默认只出计划）
 │
 ├── vault-template/              # Obsidian vault 模板
-│   ├── .obsidian/               #   图谱 + 属性面板 + Dataview 预设
-│   ├── index.md                 #   Dataview 动态索引
-│   └── templates/               #   论文记忆和洞察模板
+│   ├── .obsidian/               #   图谱 + 核心插件预设
+│   │   └── templates/           #     论文记忆与洞察模板
+│   └── index.md                 #   Dataview 动态索引
 │
 ├── references/                  # 报告、记忆与编排模板
+│   ├── dimensions.md            #   十一维细则：提问清单/输出格式/类型路由表/🌐📊 两道硬检查（Phase 2 单一来源）
 │   ├── report_template.md
 │   ├── memory_entry_template.md
 │   ├── orchestration_prompts.md #   阶段2 多代理任务卡（超长档）+ 统一 QA 卡
@@ -365,6 +371,7 @@ deep_read_paper_skill/
 ├── insights/        # 跨论文创新洞察（自动生成）
 ├── attachments/     # 每篇论文的图表裁剪（<short_name>/*.png + manifest.json）
 ├── index.md         # Dataview 动态索引
+├── .obsidian/       # 图谱/插件配置 + 模板（由 bootstrap.py 播种；存量 vault 用 --seed-obsidian 补齐，只增不改）
 └── .chromadb/       # 向量数据库（自动管理）
 ```
 
@@ -459,7 +466,7 @@ $env:MCP_TIMEOUT="60000"; claude
 <details>
 <summary><b>Q: 中文搜索结果不准确？</b></summary>
 
-默认嵌入模型 `paraphrase-multilingual-MiniLM-L12-v2` 同时支持中英文。如果你之前用的是旧版默认 `all-MiniLM-L6-v2`（仅优化英文），请在 `settings.json` 中改回 `paraphrase-multilingual-MiniLM-L12-v2`，然后重建向量索引。
+默认嵌入模型 `paraphrase-multilingual-MiniLM-L12-v2` 同时支持中英文。如果你之前配过 `all-MiniLM-L6-v2`（无 torch 的 ONNX 回退选项——从来不是出厂默认），请在 `settings.json` 中改回 `paraphrase-multilingual-MiniLM-L12-v2`，然后重建向量索引。
 </details>
 
 <details>
@@ -504,7 +511,7 @@ python tools/render_report.py --md "<报告>.md" --embed-katex
 
 | 包 | 版本 | 用途 |
 |-----|------|------|
-| `chromadb` | ≥0.4 | 语义搜索向量库 |
+| `chromadb` | ≥1.0,<2.0 | 语义搜索向量库——1.x 是硬性下限：0.x 时代落盘的索引 1.x 打不开（持久化 collection-config schema 变了），反之亦然 |
 | `python-frontmatter` | ≥1.0 | YAML frontmatter 解析 |
 | `pydantic` | ≥2.0 | MCP 工具 schema 校验 |
 | `watchfiles` | ≥0.20 | 文件变化自动增量索引 |
