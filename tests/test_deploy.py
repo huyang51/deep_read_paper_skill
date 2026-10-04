@@ -340,6 +340,24 @@ class PlaceholderSettingsTest(unittest.TestCase):
         self.assertIn("[ERROR]", out)
         self.assertIn("示例路径", out)
 
+    def test_placeholder_python_cmd_is_refused(self):
+        # (2026-10-04 deploy audit) left as the example value, python_cmd used
+        # to pass with only a WARN — registration "succeeded" and the MCP
+        # server died at first launch with no pointer back to this file.
+        out, result = self.run_load({"vault_dir": "D:/real/vault",
+                                     "python_cmd": deploy.SETTINGS_EXAMPLE_PY})
+        self.assertIsInstance(result, SystemExit)
+        self.assertIn("[ERROR]", out)
+
+    def test_placeholder_project_dir_is_refused(self):
+        # unedited "D:/my-papers" would create hooks under a literal "D:"
+        # directory on Linux; leaving the key absent stays legal (manual deploy)
+        out, result = self.run_load({"vault_dir": "D:/real/vault",
+                                     "project_dir": deploy.SETTINGS_EXAMPLE_PROJECT,
+                                     "python_cmd": sys.executable})
+        self.assertIsInstance(result, SystemExit)
+        self.assertIn("[ERROR]", out)
+
     def test_a_real_vault_dir_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             out, result = self.run_load({"vault_dir": tmp,

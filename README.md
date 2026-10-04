@@ -102,7 +102,7 @@ graph TD
 |------|-------------|-------|
 | **Python** | **3.9+** | Matches `requires-python` in `pyproject.toml`; the code deliberately avoids 3.10-only syntax |
 | **Conda** (Anaconda / Miniconda) | any | The skill **requires its own environment** (named `paper-kb` below) — not base, not a shared project env |
-| **Disk** | ~3 GB | CPU build of torch + embedding model + dependencies |
+| **Disk** | ~3 GB (or ~1 GB with `--light`) | CPU build of torch + embedding model + dependencies; `bootstrap.py --light` skips torch/sentence-transformers entirely (see below) |
 | **Network** | Model download on first run | The default embedder `paraphrase-multilingual-MiniLM-L12-v2` is ~470 MB and comes from HuggingFace. Behind a slow/blocked connection register with `python deploy.py --register --hf-endpoint https://hf-mirror.com` (the model is downloaded by the *server process* — an export in your shell never reaches it), or the first index call hangs |
 | **Claude Code** | with skills enabled | and this repo inside a skills discovery path (`~/.claude/skills/` etc.) — see Installation step 0 |
 | **Obsidian** | optional | Only for graph visualization |
@@ -124,7 +124,7 @@ cd ~/.claude/skills/deep_read_paper_skill
 python bootstrap.py --vault D:/papers/knowledge-base --register
 ```
 
-`bootstrap.py` checks the running interpreter, creates/uses the `paper-kb` conda env and installs `requirements.txt` into it when anything is missing, writes `settings.json` with that interpreter's absolute path (so `python_cmd` cannot point at the wrong Python), seeds the vault from `vault-template/` when the target does not exist, then hands off to `deploy.py` for the preflight and registration. An existing `settings.json` is kept unless `--force` (it is backed up first); the interpreter is asked interactively unless `--yes` takes the defaults. See `python bootstrap.py --help` for every flag.
+`bootstrap.py` checks the running interpreter, creates/uses the `paper-kb` conda env and installs `requirements.txt` into it when anything is missing, writes `settings.json` with that interpreter's absolute path (so `python_cmd` cannot point at the wrong Python), seeds the vault from `vault-template/` when the target does not exist, then hands off to `deploy.py` for the preflight and registration. An existing `settings.json` is kept unless `--force` (it is backed up first); the interpreter is asked interactively unless `--yes` takes the defaults. See `python bootstrap.py --help` for every flag. **Tight on disk or bandwidth?** Add `--light`: it skips torch/sentence-transformers (~2 GB saved) and embeds via ChromaDB's built-in ONNX model (`all-MiniLM-L6-v2` — English-first, noticeably weaker Chinese semantics; changing the model changes the vector space, so any existing `.chromadb` index must be rebuilt).
 
 The step-by-step path below does exactly the same things by hand:
 

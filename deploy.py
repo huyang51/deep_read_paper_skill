@@ -54,6 +54,13 @@ SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
 
 # The placeholder vault_dir in settings.example.json, verbatim.
 SETTINGS_EXAMPLE_VAULT = "D:/my-papers/knowledge-base"
+# …and the other two placeholders, same danger class (2026-10-04 deploy audit):
+# project_dir left as-is makes deploy create its hooks under a literal "D:"
+# directory on Linux; python_cmd left as-is registers an MCP server that dies
+# at first launch — a "successful" registration pointing at a nonexistent
+# interpreter, which the old WARN line let through.
+SETTINGS_EXAMPLE_PROJECT = "D:/my-papers"
+SETTINGS_EXAMPLE_PY = "D:/Anaconda3/envs/paper-kb/python.exe"
 
 # The registered server's name. Used to come out of templates/.mcp.json, which
 # this script stopped deploying along with project-scope registration; warn_if_
@@ -139,11 +146,28 @@ def load_settings() -> dict:
         print("        请把 vault_dir / project_dir / python_cmd 改成你自己的路径后重跑。")
         sys.exit(1)
 
+    # The two placeholder checks vault_dir already had (2026-10-04 deploy audit):
+    # an unedited project_dir creates hooks under a literal "D:" on Linux; an
+    # unedited python_cmd yields a "successful" MCP registration that dies at
+    # first launch — users blamed the skill, not their cp-without-edit. ERROR is
+    # deterministic (literal match); "real path not on PATH" stays a WARN so
+    # this gate never depends on the machine deploy itself runs on.
+    if settings.get("project_dir") == SETTINGS_EXAMPLE_PROJECT:
+        print(f"[ERROR] settings.json 的 project_dir 还是模板里的示例路径（{SETTINGS_EXAMPLE_PROJECT}）。")
+        print("        请改成你自己的项目目录（或留空走手动部署）后重跑。")
+        sys.exit(1)
+
     python_cmd = settings.get("python_cmd", "python")
+    if python_cmd == SETTINGS_EXAMPLE_PY:
+        print(f"[ERROR] settings.json 的 python_cmd 还是模板里的示例值（{SETTINGS_EXAMPLE_PY}）。")
+        print("        填本 skill 专用 conda 环境里 python 的绝对路径（README 安装步骤 2），")
+        print("        或直接改走一键部署：python bootstrap.py --vault <路径> --register")
+        sys.exit(1)
     if shutil.which(python_cmd) is None:
         print(f"[WARN] python_cmd '{python_cmd}' is not on PATH;")
         print("       hooks/templates will use this exact string at deploy time.")
-        print("       Verify it works in the target environment before deploying.")
+        print("       MCP server will FAIL TO START with this value — verify it")
+        print("       resolves in the target environment before deploying.")
 
     return settings
 

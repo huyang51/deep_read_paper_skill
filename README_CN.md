@@ -102,7 +102,7 @@ graph TD
 |---|---|---|
 | **Python** | **3.9+** | 与 `pyproject.toml` 的 `requires-python` 一致（代码刻意避开 3.10 独有语法） |
 | **Conda**（Anaconda / Miniconda） | 任意版本 | 本 skill **要求一个专用环境**（下称 `paper-kb`）——不要装进 base，也不要跟别的项目共用 |
-| **磁盘** | 约 3 GB | CPU 版 torch + 嵌入模型 + 依赖 |
+| **磁盘** | 约 3 GB（`--light` 约 1 GB） | CPU 版 torch + 嵌入模型 + 依赖；`bootstrap.py --light` 整个跳过 torch/sentence-transformers（见下） |
 | **网络** | 首次运行需下载嵌入模型 | 默认模型 `paraphrase-multilingual-MiniLM-L12-v2` 约 470 MB，从 HuggingFace 拉取；国内网络请用 `python deploy.py --register --hf-endpoint https://hf-mirror.com` 注册（模型由 server 进程下载，shell 里 export 到不了它），否则会卡在下载 |
 | **Claude Code** | 启用 skills 功能 | 且本仓库必须位于 skills 发现路径（`~/.claude/skills/` 等），见安装第 0 步 |
 | **Obsidian** | 可选 | 只用于知识图谱可视化 |
@@ -124,7 +124,7 @@ cd ~/.claude/skills/deep_read_paper_skill
 python bootstrap.py --vault D:/papers/knowledge-base --register
 ```
 
-`bootstrap.py` 会：检查当前解释器的依赖 → 缺了就自动创建/复用 `paper-kb` conda 环境并装好 `requirements.txt` → 用该解释器的**绝对路径**写 `settings.json`（`python_cmd` 不可能再指错 Python）→ 目标不存在时按 `vault-template/` 初始化知识库 → 最后交给 `deploy.py` 做启动自检与注册。已存在的 `settings.json` 默认保持原样（`--force` 才覆盖，先备份）；路径默认交互式询问，`--yes` 直接采用默认值。全部参数见 `python bootstrap.py --help`。
+`bootstrap.py` 会：检查当前解释器的依赖 → 缺了就自动创建/复用 `paper-kb` conda 环境并装好 `requirements.txt` → 用该解释器的**绝对路径**写 `settings.json`（`python_cmd` 不可能再指错 Python）→ 目标不存在时按 `vault-template/` 初始化知识库 → 最后交给 `deploy.py` 做启动自检与注册。已存在的 `settings.json` 默认保持原样（`--force` 才覆盖，先备份）；路径默认交互式询问，`--yes` 直接采用默认值。全部参数见 `python bootstrap.py --help`。**磁盘/带宽紧张？** 加 `--light`：跳过 torch/sentence-transformers（省约 2 GB），嵌入改走 ChromaDB 自带的 ONNX 模型（`all-MiniLM-L6-v2`——以英文为主，中文语义明显较弱；换模型等于换向量空间，已有的 `.chromadb` 索引必须重建）。
 
 下面的分步手动路径做的事与它完全相同：
 
