@@ -23,6 +23,12 @@ import json
 import sys
 from pathlib import Path
 
+# Ensure UTF-8 output on Windows (GBK console mangles CJK + arrows): the
+# dead-target / duplicate-id warnings here carry paper file names.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
