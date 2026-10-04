@@ -154,8 +154,55 @@ class LightInstallTest(unittest.TestCase):
     def test_light_flag_is_forwarded_on_reexec(self):
         """The re-exec into the conda env must carry --light, or the second
         pass would check for (and install into) the torch path anyway."""
-        args = bootstrap.parse_args(["--light", "--yes"])
-        self.assertTrue(args.light)
+        captured = self._drive_main(["--light", "--yes"])
+        self.assertIn("--light", captured["argv"])
+
+    def test_interactive_light_choice_reaches_reexec_and_install(self):
+        """The old table was built from argv BEFORE the "[2]" prompt, so the
+        hand-picked light choice evaporated on re-exec: the child reinstalled
+        the full torch stack, then died with a FALSE 「仍缺少依赖」. The
+        forwarding must be built after the interactive decision."""
+        captured = {}
+
+        def fake_input(_prompt):
+            captured["asked"] = True
+            return "2"
+
+        with unittest.mock.patch("sys.stdin.isatty", return_value=True), \
+                unittest.mock.patch("builtins.input", fake_input):
+            captured = self._drive_main(["--env-name", "E"], captured=captured,
+                                         tty=True)
+        self.assertTrue(captured.get("asked"))
+        self.assertIn("--light", captured["argv"])
+        self.assertTrue(captured["install_light"], "install_into_env 也要收到 light=True")
+
+    def test_seed_obsidian_survives_reexec(self):
+        """--seed-obsidian was missing from the forwarding table entirely."""
+        captured = self._drive_main(["--yes", "--seed-obsidian", "--light"])
+        self.assertIn("--seed-obsidian", captured["argv"])
+
+    def _drive_main(self, argv, captured=None, tty=False):
+        """Run bootstrap.main() on the broken-deps branch with every heavy
+        step stubbed; return what reap_exec would have received."""
+        captured = captured if captured is not None else {}
+
+        def _reap(target, forwarded):
+            captured["argv"] = list(forwarded)
+
+        def _install(env_name, base, light):
+            captured["install_light"] = light
+            return Path("C:/fake-env/python.exe")
+
+        with unittest.mock.patch.object(bootstrap, "missing_imports",
+                                        lambda needed: ["sentence_transformers"]), \
+                unittest.mock.patch.object(bootstrap, "conda_base",
+                                           lambda: Path("C:/conda")), \
+                unittest.mock.patch.object(bootstrap, "install_into_env", _install), \
+                unittest.mock.patch.object(bootstrap, "reap_exec", _reap), \
+                unittest.mock.patch("sys.stdin.isatty", return_value=tty), \
+                unittest.mock.patch.object(bootstrap, "log", lambda *a, **k: None):
+            bootstrap.main(argv)
+        return captured
 
 
 if __name__ == "__main__":

@@ -38,6 +38,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Same GBK-console policy as bootstrap.py and the tools/: the Chinese check
+# lines and the user-controlled echoes (vault paths, python_cmd, claude
+# output) must never UnicodeEncodeError the installer.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from mcp_server import config
 from mcp_server.hf_offline import prefer_cached_model
 
@@ -107,7 +114,10 @@ def load_settings() -> dict:
         print(f"  and re-run this command.")
         sys.exit(1)
 
-    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+    # utf-8-sig, matching mcp_server/config.py and bootstrap.py: Notepad's
+    # "UTF-8" save adds a BOM, the server read that file fine while deploy
+    # died with a raw JSONDecodeError traceback on the very same settings.
+    with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
         raw = json.load(f)
 
     settings = {k: v for k, v in raw.items() if not k.startswith("_")}
@@ -141,7 +151,15 @@ def render_template(template_path: Path, variables: dict) -> str:
         content = f.read()
 
     for key, val in sorted(variables.items(), key=lambda kv: -len(kv[0])):
-        content = content.replace("{{" + key + "}}", str(val))
+        # Every placeholder lives INSIDE a JSON string (see templates/), so the
+        # value must be inserted as JSON string CONTENT. settings.json legally
+        # spells "python_cmd": "D:\\Anaconda\\…"; raw str(val) injection wrote
+        # a single backslash into the rendered file and the output was invalid
+        # JSON — the deploy self-check at json.loads(...) then crashed on our
+        # own artifact. (config.py tells users to use forward slashes; that is
+        # advice, not a validation deploy may assume.)
+        content = content.replace("{{" + key + "}}",
+                                  json.dumps(str(val))[1:-1])
 
     unreplaced = set(re.findall(r"\{\{(\w+)\}\}", content))
     if unreplaced:

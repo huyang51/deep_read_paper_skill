@@ -39,6 +39,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+# GBK consoles crash on this script's Chinese progress lines — and on the
+# user-controlled strings echoed through it (vault_dir, python_cmd, the claude
+# register output), where even a single emoji in a path killed the installer.
+# Same policy as the tools/: always UTF-8 stdout, replace what cannot encode.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 SKILL_DIR = Path(__file__).resolve().parent
 SETTINGS_FILE = SKILL_DIR / "settings.json"
 SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
@@ -288,17 +296,6 @@ def reap_exec(target: Path, argv):
 
 def main(argv=None):
     args = parse_args(argv)
-    forwarded = []          # what to pass back to ourselves on re-exec
-    for flag, value in (("--vault", args.vault), ("--project", args.project),
-                        ("--env-name", args.env_name)):
-        if value:
-            forwarded += [flag, value]
-    for flag, on in (("--register", args.register), ("--no-env", args.no_env),
-                     ("--no-vault-template", args.no_vault_template),
-                     ("--force", args.force), ("--yes", args.yes),
-                     ("--light", args.light)):
-        if on:
-            forwarded.append(flag)
 
     log("=" * 55)
     log("  deep_read_paper_skill -- bootstrap")
@@ -320,6 +317,27 @@ def main(argv=None):
         answer = input("  选择 [1]: ").strip()
         light = answer == "2"
         log()
+
+    # Build the re-exec forwarding AFTER the interactive choice, and from the
+    # resolved `light`, not argv: the old table saw only `--light` on the
+    # command line, so a hand-picked "[2]" never reached the child — it
+    # judged the freshly-installed light env "missing torch", reinstalled the
+    # full 2 GB stack against the user's explicit choice, and then died in
+    # reap_exec with a FALSE 「仍缺少依赖」 (REEXEC_FLAG was already set).
+    # --seed-obsidian was missing from the table altogether: silently dropped
+    # on the second pass whenever dependencies had to be installed first.
+    forwarded = []          # what to pass back to ourselves on re-exec
+    for flag, value in (("--vault", args.vault), ("--project", args.project),
+                        ("--env-name", args.env_name)):
+        if value:
+            forwarded += [flag, value]
+    for flag, on in (("--register", args.register), ("--no-env", args.no_env),
+                     ("--no-vault-template", args.no_vault_template),
+                     ("--seed-obsidian", args.seed_obsidian),
+                     ("--force", args.force), ("--yes", args.yes),
+                     ("--light", light)):
+        if on:
+            forwarded.append(flag)
 
     needed = SERVER_IMPORTS if light else SERVER_IMPORTS + MODEL_IMPORTS
     broken = missing_imports(needed)

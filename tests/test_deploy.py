@@ -410,5 +410,30 @@ class SkillDiscoveryTest(unittest.TestCase):
         self.assertIn("[注意]", out)
 
 
+class SettingsEncodingTest(unittest.TestCase):
+    """2026-10-04 audit: BOM and backslashes are LEGAL settings.json inputs —
+    the server (config.py, utf-8-sig) read both files fine while deploy
+    crashed on the BOM and RENDERED invalid JSON from the backslashes."""
+
+    def test_bom_prefixed_settings_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "settings.json"
+            f.write_bytes(("\ufeff" + json.dumps(
+                {"vault_dir": "D:/papers", "python_cmd": "python"}
+            )).encode("utf-8"))
+            with unittest.mock.patch.object(deploy, "SETTINGS_FILE", f):
+                settings = deploy.load_settings()
+        self.assertEqual(settings["vault_dir"], "D:/papers")
+
+    def test_backslash_values_render_valid_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tpl = Path(tmp) / ".mcp.json"
+            tpl.write_text('{"command": "{{PYTHON_CMD}}"}\n', encoding="utf-8")
+            rendered = deploy.render_template(
+                tpl, {"PYTHON_CMD": "D:\\Anaconda\\python.exe"})
+            parsed = json.loads(rendered)  # used to raise: Invalid \escape
+            self.assertEqual(parsed["command"], "D:\\Anaconda\\python.exe")
+
+
 if __name__ == "__main__":
     unittest.main()
