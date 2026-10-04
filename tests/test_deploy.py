@@ -28,6 +28,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import deploy  # noqa: E402
+from mcp_server import console  # noqa: E402
 
 BASE_MODULES = {"chromadb", "frontmatter", "watchfiles", "pydantic"}
 
@@ -100,9 +101,12 @@ class RegistrationCommandTest(unittest.TestCase):
         self.assertFalse(any(a.startswith("HF_ENDPOINT") for a in argv))
 
 
-class RunnableTest(unittest.TestCase):
+class SpawnableTest(unittest.TestCase):
+    """The Windows .cmd/.bat shim resolver lives in mcp_server.console now —
+    deploy.py and bootstrap.py both used to carry a private copy of it."""
+
     def test_missing_command_reports_none(self):
-        self.assertIsNone(deploy.runnable(["definitely-not-on-path-xyz"]))
+        self.assertIsNone(console.spawnable(["definitely-not-on-path-xyz"]))
 
     @unittest.skipUnless(os.name == "nt", "the .cmd shim is a Windows problem")
     def test_windows_cmd_shim_is_launched_through_cmd(self):
@@ -111,15 +115,15 @@ class RunnableTest(unittest.TestCase):
         A bare list would work on a machine with claude.exe and fail on the
         npm install — the difference being invisible until someone else runs it.
         """
-        with mock.patch.object(deploy.shutil, "which",
+        with mock.patch.object(console.shutil, "which",
                                return_value=r"C:\npm\claude.cmd"):
-            self.assertEqual(deploy.runnable(["claude", "mcp", "list"]),
+            self.assertEqual(console.spawnable(["claude", "mcp", "list"]),
                              ["cmd.exe", "/c", r"C:\npm\claude.cmd", "mcp", "list"])
 
     def test_real_executable_is_used_directly(self):
-        with mock.patch.object(deploy.shutil, "which",
+        with mock.patch.object(console.shutil, "which",
                                return_value=r"C:\bin\claude.exe"):
-            self.assertEqual(deploy.runnable(["claude", "mcp", "list"]),
+            self.assertEqual(console.spawnable(["claude", "mcp", "list"]),
                              [r"C:\bin\claude.exe", "mcp", "list"])
 
 

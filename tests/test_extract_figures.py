@@ -243,7 +243,7 @@ class ExtractIntegrationTest(unittest.TestCase):
             self.assertLessEqual(max(fig["width_px"], fig["height_px"]), 1000)
 
     def test_manifest_written_utf8_with_captions(self):
-        m = self._extract()
+        self._extract()
         raw = (self.outdir / "manifest.json").read_text(encoding="utf-8")
         self.assertIn("栅格示意图", raw)  # caption text preserved, not escaped
 

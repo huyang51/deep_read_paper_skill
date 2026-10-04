@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import Optional
 from mcp_server.config import PAPERS_DIR
 from mcp_server.relations import (
-    coerce_id as _relations_coerce_id,
-    derive_relations, inverse_direction, merge_relation, normalize_relations,
-    project_related_papers, relation_index, relations_of,
+    coerce_id, inverse_direction, merge_relation,
+    normalize_relations, project_related_papers, relation_index, relations_of,
 )
 
 # The machine-managed section that carries Obsidian graph edges. Everything
@@ -72,7 +71,6 @@ def get_all_papers(papers_dir: Path = None) -> list[dict]:
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
-    import time
     now = time.time()
 
     # Use cache if fresh AND for the same directory (avoids stale data after vault switch)
@@ -118,12 +116,6 @@ def invalidate_papers_cache():
     _all_papers_cache["mtime"] = 0.0
     _all_papers_cache["papers_dir"] = None
     _all_papers_cache["errors"] = []
-
-
-def coerce_id(value) -> Optional[int]:
-    """Re-exported from relations (the canonical home); kept here because every
-    parser caller and half the tools import it by this name from this module."""
-    return _relations_coerce_id(value)
 
 
 def get_paper_by_id(paper_id: int, papers_dir: Path = None) -> Optional[dict]:
@@ -307,18 +299,16 @@ def _create_paper_file_impl(paper_data: dict, papers_dir: Path) -> Path:
             f"请给当前这篇（ID={paper_id}）换一个 short_name 后重试。"
         )
 
-    # Structured relations carry the semantics; related_papers is the legacy
-    # projection other queries still read. Declared relations win and the
-    # projection is regenerated, so the two can never disagree in a fresh write.
+    # `relations` is the only relation input there is: the projection is
+    # regenerated from it on every write, so the two fields cannot disagree and a
+    # hand-typed `related_papers` can never reach the file. A partial update that
+    # omits relations keeps whatever the note already declared — that is the
+    # note's own data, not an input field, and dropping it on a partial write
+    # would delete graph edges nobody meant to touch.
     relations, _ = normalize_relations(paper_data.get("relations"))
-    related_papers = paper_data.get("related_papers", [])
     if not relations and prev:
-        # Legacy path: an update that does not mention relations must not erase
-        # the ones already recorded (that would silently drop graph edges).
         relations = relations_of(prev)
-        related_papers = related_papers or prev.get("related_papers", [])
-    if relations:
-        related_papers = project_related_papers(relations)
+    related_papers = project_related_papers(relations)
 
     # Build frontmatter metadata
     metadata = {
@@ -575,19 +565,17 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
     the *other* paper declared on its own initiative carry no flag and are
     never touched.
 
-    Returns ``{"updated": [ids], "missing": [ids], "derived": [ids],
-    "healed": [ids]}`` where ``derived`` marks papers whose legacy
-    ``related_papers`` had to be migrated on the fly (they had no relations
-    yet) and ``healed`` marks papers whose stale mirror was removed.
+    Returns ``{"updated": [ids], "missing": [ids], "healed": [ids]}``, where
+    ``healed`` marks papers whose stale mirror was removed.
     """
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
-    result = {"updated": [], "missing": [], "derived": [], "healed": []}
+    result = {"updated": [], "missing": [], "healed": []}
     entries = relations_of(paper)
 
     index = relation_index(get_all_papers(papers_dir))
-    self_id, self_short = coerce_id(paper.get("id")), paper.get("short_name", "")
+    self_id = coerce_id(paper.get("id"))
 
     for entry in entries:
         other = index.get(entry["target"])
@@ -607,13 +595,6 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
         other = fresh
 
         back = relations_of(other)
-        if not back and other.get("related_papers"):
-            # Touch-migrate: the reciprocal cannot be added to a legacy paper
-            # without first materialising its own relations, or the projection
-            # below would delete the ids it still carries.
-            back, _ = derive_relations(other, index)
-            result["derived"].append(other["id"])
-
         back, changed = merge_relation(back, self_id, entry["type"],
                                        inverse_direction(entry["direction"]),
                                        note=entry["note"], mark_synced=True)
@@ -669,12 +650,12 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
                                 if k not in ("body", "file")}
                     _write_paper(my_path, metadata, body)
 
-    if result["updated"] or result["derived"] or result["healed"]:
+    if result["updated"] or result["healed"]:
         invalidate_papers_cache()
     return result
 
 
-def sync_graph_edges(paper: dict, papers_dir: Path = None) -> dict:
+def sync_graph_edges(papers_dir: Path = None) -> dict:
     """Keep ``## 后续引用`` sections matching the declared directions.
 
     Obsidian draws an arrow from the file that *contains* ``[[X]]`` to X. The
@@ -767,11 +748,10 @@ def sync_paper_relations(paper: dict, papers_dir: Path = None) -> dict:
     whose stale mirror was removed after the owning declaration disappeared.
     """
     mirrored = sync_relations(paper, papers_dir)
-    edges = sync_graph_edges(paper, papers_dir)
+    edges = sync_graph_edges(papers_dir)
     return {
         "mirrored": mirrored["updated"],
         "missing": mirrored["missing"],
-        "derived": mirrored["derived"],
         "healed": mirrored["healed"],
         "edges_updated": edges["updated"],
         "edges_moved": edges["moved"],
@@ -869,11 +849,11 @@ def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
 
         entries = relations_of(paper)
         kept_entries = [e for e in entries if e["target"] != deleted_id]
-        legacy = paper.get("related_papers") or []
-        if kept_entries:
-            kept_legacy = project_related_papers(kept_entries)
-        else:
-            kept_legacy = [r for r in legacy if coerce_id(r) != deleted_id]
+        # The projection is always derived: a survivor that ends up with no
+        # declared relations ends up with an empty list too, rather than keeping
+        # ids no declaration covers.
+        projection = paper.get("related_papers") or []
+        kept_projection = project_related_papers(kept_entries)
 
         path = _paper_path(paper, papers_dir)
         if path is None:
@@ -883,13 +863,13 @@ def cleanup_after_deletion(deleted_id: int, deleted_short_name: str = "",
         kept_links = ([l for l in links if l not in gone_links]
                       if gone_links else links)
 
-        if (len(kept_entries) == len(entries) and len(kept_legacy) == len(legacy)
+        if (kept_entries == entries and kept_projection == projection
                 and kept_links == links):
             continue
 
         metadata = {k: v for k, v in paper.items() if k not in ("body", "file")}
         metadata["relations"] = kept_entries
-        metadata["related_papers"] = kept_legacy
+        metadata["related_papers"] = kept_projection
         _write_paper(path, metadata,
                      _rebuild_followup(before, kept_links, after)
                      if kept_links != links else body)

@@ -44,7 +44,6 @@ class PaperIndexInput(BaseModel):
     relations: list[dict] = Field(
         default_factory=list,
         description="结构化关联：{target, type, direction, note}；写入时自动回写对方互指条目并维护图谱箭头")
-    related_papers: list[int] = Field(default_factory=list, description="兼容字段：relations 的投影，工具自动维护")
     date_read: str = Field(default="", description="阅读日期 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$|^$")
     read_mode: str = Field(default="standard", pattern=r"^(quick|standard|deep)$", description="Phase 0 分诊档位")
     aliases: list[str] = Field(default_factory=list, description="别名列表（用于 Obsidian 图谱显示和搜索）")

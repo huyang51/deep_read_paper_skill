@@ -23,17 +23,18 @@ import json
 import sys
 from pathlib import Path
 
-# Ensure UTF-8 output on Windows (GBK console mangles CJK + arrows): the
-# dead-target / duplicate-id warnings here carry paper file names.
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
-from mcp_server.markdown_parser import coerce_id, get_all_papers  # noqa: E402
-from mcp_server.relations import DIRECTION_CN, RELATION_TYPE_CN, relations_of  # noqa: E402
+from mcp_server.console import force_utf8  # noqa: E402
+from mcp_server.markdown_parser import _link_text, get_all_papers  # noqa: E402
+from mcp_server.relations import (  # noqa: E402
+    DIRECTION_CN, RELATION_TYPE_CN, coerce_id, index_papers, relations_of,
+)
+
+# The dead-target / duplicate-id warnings here carry paper file names, which a
+# GBK console cannot encode.
+force_utf8()
 
 # Colors are fixed (not theme tokens) so edge color stays a reliable legend key
 # in both light and dark mode.
@@ -46,36 +47,21 @@ TYPE_COLORS = {
 FALLBACK_COLOR = "#8a93a0"
 
 
-def _label(paper: dict) -> str:
-    """Graph label: file stem (the wikilink-resolvable form) or short_name."""
-    f = paper.get("file", "")
-    if f:
-        return Path(f).stem
-    return paper.get("short_name", "")
-
-
 def build_graph_data(papers: list) -> tuple:
     """(nodes, edges, dead_targets, duplicate_ids) — JSON-ready structures.
 
-    duplicate_ids lists ``(pid, dropped_file, kept_file)``: two papers sharing
-    an id overwrite each other in the index, and the dropped file's relations
-    would vanish from the page without a word — the same detection
-    get_paper_by_id already warns about, so main() prints it.
+    duplicate_ids comes from index_papers as ``(pid, dropped_file, kept_file)``:
+    two papers sharing an id overwrite each other in the index, and the dropped
+    file's relations would vanish from the page without a word, so main() prints
+    it (the same condition get_paper_by_id warns about).
     """
-    index = {}
-    dupes = []
-    for p in papers:
-        pid = coerce_id(p.get("id"))
-        if pid is not None:
-            if pid in index:
-                dupes.append((pid, index[pid].get("file", "?"), p.get("file", "?")))
-            index[pid] = p
+    index, dupes = index_papers(papers)
 
     nodes = []
     for pid, p in index.items():
         nodes.append({
             "id": pid,
-            "label": _label(p) or f"#{pid}",
+            "label": _link_text(p) or f"#{pid}",
             "title": p.get("title", ""),
             "year": p.get("year", ""),
             "venue": p.get("venue", ""),

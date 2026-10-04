@@ -29,6 +29,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from mcp_server import config  # noqa: E402
 from mcp_server import server  # noqa: E402
 
 
@@ -335,7 +336,9 @@ class ErrorSanitizationTest(unittest.TestCase):
     def test_short_roots_are_never_blanked(self):
         """A degenerate root (drive letter like C:\) must not be replaced —
         that would mangle every message containing that two-char string."""
-        text = server._sanitize_error("路径 C:\\ 没问题，C:\\x 也不动")
+        # The sanitizer moved to config (both entry points need it, and the roots
+        # it masks are config's own), so the server no longer owns the function.
+        text = config.sanitize_error("路径 C:\\ 没问题，C:\\x 也不动")
         self.assertIn("C:\\", text)
 
 

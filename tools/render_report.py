@@ -532,8 +532,6 @@ _ALERT = re.compile(r"<blockquote>\s*" + _ALERT_MARK.pattern, re.I)
 _BLOCKQUOTE = re.compile(r"<blockquote>(.*?)</blockquote>", re.DOTALL)
 _LINK = re.compile(r'<a href="(https?://[^"]+)"')
 _EMPTY_DIV = re.compile(r"<div\b[^>]*>\s*</div>")
-_FOOTNOTE_BACK = re.compile(r'<a href="#fnref[^"]*" class="footnote-backref">.*?</a>',
-                            re.DOTALL)
 _ALERT_LABEL = {"note": "说明", "tip": "提示", "important": "重要",
                 "warning": "警告", "caution": "注意"}
 
@@ -1044,7 +1042,6 @@ figcaption{font-size:13px;color:var(--fg-dim);text-align:left;font-family:var(--
 img{max-width:100%;height:auto;display:block;border:1px solid var(--rule);
   border-radius:8px;background:#fff;cursor:zoom-in;
   box-shadow:0 2px 10px var(--tw-sh)}
-@media (prefers-color-scheme: dark){img{background:#23252b;filter:brightness(.94)}}
 .wikilink{border-bottom:1px dashed var(--accent);color:var(--accent);
   font-style:italic}
 .footnote{font-size:.9em;color:var(--fg-dim);margin-top:2.4em}

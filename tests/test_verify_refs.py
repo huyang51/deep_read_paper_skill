@@ -79,23 +79,23 @@ class ParseTest(unittest.TestCase):
 class ClassifyTest(unittest.TestCase):
     def test_gates(self):
         cases = [
-            (_result("exact"), "Vaswani", 2017, "exists_ok"),
-            (_result("probable"), "", None, "exists_ok"),
-            (_result("exact", author_match=False), "Vaswani", 2017, "discrepancy"),
+            (_result("exact"), "Vaswani", "exists_ok"),
+            (_result("probable"), "", "exists_ok"),
+            (_result("exact", author_match=False), "Vaswani", "discrepancy"),
             # nobody claimed -> nothing to disagree with
-            (_result("exact", author_match=False, year_match=False), "", None, "exists_ok"),
+            (_result("exact", author_match=False, year_match=False), "", "exists_ok"),
             # only a weak candidate (< 0.75) -> nothing convincing at title level
-            (_result("uncertain", sim=0.62), "X", 2020, "unresolved"),
-            (_result("not_found", match=False), "X", 2020, "unresolved"),
+            (_result("uncertain", sim=0.62), "X", "unresolved"),
+            (_result("not_found", match=False), "X", "unresolved"),
             (_result("not_found", match=False,
                      notes=["identifier given but lookup incomplete (OpenAlex "
                             "coverage gap or Semantic Scholar rate-limit window); "
                             "a weak verdict here means DEFER AND RETRY, not "
-                            "'claim is fake'."]), "X", 2020, "defer"),
-            (_result("network_error", match=False), "X", 2020, "network"),
+                            "'claim is fake'."]), "X", "defer"),
+            (_result("network_error", match=False), "X", "network"),
         ]
-        for result, author, year, expected in cases:
-            self.assertEqual(vr.classify(result, author, year), expected, result)
+        for result, author, expected in cases:
+            self.assertEqual(vr.classify(result, author), expected, result)
 
     def test_gate_reads_the_pool_not_the_top_rank(self):
         """Live 2026-09-29: OpenAlex ranked the lookalike ('Is Attention All
@@ -108,19 +108,19 @@ class ClassifyTest(unittest.TestCase):
                                   "year": 2025, "venue": "", "doi": "", "cited_by_count": 26892,
                                   "authors": ["Ashish Vaswani", "Noam Shazeer"],
                                   "similarity": 1.0, "author_match": True, "year_match": False})
-        self.assertEqual(vr.classify(result, "Vaswani", 2017), "exists_ok")
+        self.assertEqual(vr.classify(result, "Vaswani"), "exists_ok")
 
     def test_strong_title_match_survives_a_verdict_downgrade(self):
         """Two cross-check downgrades (author absent from the top candidate +
         year artifact) push cite_verify to 'uncertain'; a title-level match is
         still an existence fact."""
-        self.assertEqual(vr.classify(_result("uncertain"), "Vaswani", 2017), "exists_ok")
+        self.assertEqual(vr.classify(_result("uncertain"), "Vaswani"), "exists_ok")
 
     def test_year_mismatch_alone_is_not_a_misattribution(self):
         """Live 2026-09-29: OpenAlex's merged Transformer record says 2025.
         Flagging that as '信息不符' would slander the most-cited paper in ML."""
         result = _result("probable", year_match=False, year=2025)
-        self.assertEqual(vr.classify(result, "Vaswani", 2017), "exists_ok")
+        self.assertEqual(vr.classify(result, "Vaswani"), "exists_ok")
         note = vr.gate_note("exists_ok", result, {"author": "Vaswani", "year": 2017})
         self.assertIn("2025", note)
         self.assertIn("合并", note)

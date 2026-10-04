@@ -338,7 +338,7 @@ python "<skill_dir>/tools/index_paper.py" \
 
 脚本自动完成 ID 分配、文件创建、ChromaDB 索引，并把 `--relations` 声明的关系落地成三件事：**对方论文里的互指条目**（`direction` 自动取反）、**双方 `related_papers` 投影**、**按声明方向放置的 `## 后续引用` 图谱边**（写在被声明为 `successor` 的一方）。输出 JSON 格式结果到 stdout；`relations_synced.unresolved_targets` 非空表示指向的论文尚未入库——索引对方论文后重跑一次即可补齐。
 
-> `--related_papers "1,3"` 是迁移前的旧字段，仅为兼容保留：它没有方向语义，方向只能按发表年份推断。**新关联一律用 `--relations`**；关系较多时 `--relations` 也接受一个 JSON 文件路径（避免命令行转义地狱）。
+> **`--relations` 是唯一的关系入口**：`related_papers` 是它的投影，写不出来也不再接受输入。关系较多时 `--relations` 接受一个 JSON 文件路径（避免命令行转义地狱）。
 >
 > 返回里 `vector_index: "failed: …"` 表示向量索引没建起来（常见原因：嵌入模型未安装/未下载），**论文文件与关系已经正常落盘**——按 warning 里的提示修好环境后重跑一次索引即可，不要因为这一项重写论文文件。
 
@@ -401,10 +401,11 @@ tags: [tag1, tag2]
 
 #### 4.5.1 规则 1：相关性优先（最重要的规则）
 
-**声明 `relations` 之前必须先用 `paper_find_related` 工具找候选**。该工具按可信度分三档返回，每个候选带 `source` 字段：
+**声明 `relations` 之前必须先用 `paper_find_related` 工具找候选**。该工具按可信度分两档返回，每个候选带 `source` 字段：
 - `declared` — 已有 `relations` 声明（最高）
-- `legacy` — 旧 `related_papers` 字段
 - `inferred` — 共享关键词推断：method_category / problem_domain / keywords 的重叠数（需 ≥ 2 个才视为相关）
+
+`related_papers` 不是候选来源：它只是 `relations` 的投影，读它等于读已经声明过的东西。
 
 工具返回的每个候选都包含：
 - `relation_type`：`method_similar` / `problem_related` / `complementary` / `evolutionary`
@@ -454,7 +455,7 @@ tags: [tag1, tag2]
 ```bash
 python tools/verify_graph_arrows.py
 ```
-脚本按可信度递减做三层检查：① `relations` 完整性（互指对称、类型一致、目标存在、方向与年份、依据是否齐备）② 箭头方向（此时报错基本意味着**手写链接**，不是同步失败）③ 每条 `related_papers` 是否有正文依据。有问题时 exit code 1。
+脚本按可信度递减做三层检查：① `relations` 完整性（互指对称、类型一致、目标存在、方向与年份、依据是否齐备，以及 `related_papers` 是否仍等于投影——不等就是手改或旧 vault 未迁移，报 ERROR）② 箭头方向（此时报错基本意味着**手写链接**，不是同步失败）③ 每条关系是否有正文依据。有问题时 exit code 1。
 
 **关联方式**：
 1. 通过 `index_paper.py --relations` / MCP 工具 `paper_index` 的 `relations` 参数声明；脚本同步互指条目与图谱边
@@ -464,7 +465,7 @@ python tools/verify_graph_arrows.py
 
 #### 4.5.3 旧 vault 迁移
 
-已有 vault 若只有 `related_papers` 和手写 `## 后续引用`（没有 `relations`），用迁移工具一次性结构化——**默认只出计划，不写盘**：
+已有 vault 若只有 `related_papers` 和手写 `## 后续引用`（没有 `relations`），**必须先迁移再索引**：运行时只读 `relations`，`related_papers` 不再作为输入被读取，未迁移的笔记一旦被写入就会按投影重建（那些没有声明覆盖的 ID 随之丢弃）。`verify_graph_arrows.py` 与 `migrate_relations.py --check` 会以 **ERROR**（exit 1）报 `unmigrated`，不会让你错过这一步。迁移工具**默认只出计划，不写盘**：
 
 ```bash
 python tools/migrate_relations.py            # 扫描并打印迁移计划（安全，不写盘）
@@ -528,7 +529,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 ### 5.4 关联更新
 
 - 把 5.1-5.3 识别出的关联写成 `relations` 条目（**必须先执行 4.5.1 的候选核验**），再重新索引该论文：互指条目、`related_papers` 投影与 `## 后续引用` 图谱边由脚本按 `direction` 放置
-- **禁止**手改 `related_papers` 或 `## 后续引用`：它们是 `relations` 的投影，手改会在下次同步时被覆盖，且 `verify_graph_arrows.py` 会报 `legacy_drift`
+- **禁止**手改 `related_papers` 或 `## 后续引用`：它们是 `relations` 的投影，手改会在下次同步时被覆盖，且 `verify_graph_arrows.py` 会以 **ERROR** 报 `projection_drift`（列出没有声明覆盖的条目）
 - 方向由声明决定，与阅读顺序无关；`peer` 关系双向互指但不产生图谱边
 
 ---

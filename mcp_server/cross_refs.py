@@ -1,9 +1,9 @@
 import re
 from typing import Optional
-from mcp_server.markdown_parser import (
-    coerce_id, get_paper_by_id, extract_wikilinks, get_all_papers,
+from mcp_server.markdown_parser import get_paper_by_id, extract_wikilinks, get_all_papers
+from mcp_server.relations import (
+    derive_direction, infer_type, relation_index, relations_of,
 )
-from mcp_server.relations import derive_direction, infer_type, relation_index, relations_of
 
 # Minimum number of shared keywords (case-insensitive) to consider two papers related.
 # Two papers sharing 1 keyword often happens by chance (e.g., "deep learning" appears in
@@ -11,48 +11,43 @@ from mcp_server.relations import derive_direction, infer_type, relation_index, r
 MIN_SHARED_KEYWORDS = 2
 
 # Result ordering: a declared relation is a judgement someone made on purpose;
-# a legacy related_papers row is a weaker claim; keyword overlap is a hint.
-_SOURCE_RANK = {"declared": 0, "legacy": 1, "inferred": 2}
+# keyword/wikilink overlap is only a hint. `related_papers` is not a source at
+# all — it is the projection of the declarations, regenerated on every write.
+_SOURCE_RANK = {"declared": 0, "inferred": 1}
 
 
 def find_related(paper_id: int, relation_type: Optional[str] = None) -> list[dict]:
     """Find papers related to the given paper ID.
 
-    Three sources feed the result, in descending trust:
+    Two sources feed the result, in descending trust:
 
     1. ``relations`` frontmatter — type and direction are *declared* facts.
-    2. ``related_papers`` without a declaration — legacy rows; type and
-       direction are derived (category equality / publication order).
-    3. Body wikilinks and shared keywords — inferred candidates.
+    2. Body wikilinks and shared keywords — inferred candidates.
 
     ``source`` in each result says which one it came from, so a caller can tell
-    a curated relation from a keyword coincidence. The old behaviour (every type
-    re-derived from two string equalities) is preserved for sources 2 and 3.
+    a curated relation from a keyword coincidence. ``related_papers`` is not a
+    source: it is the projection the writer keeps in step with ``relations``, so
+    reading it would add nothing that ``relations`` does not already say.
     """
     paper = get_paper_by_id(paper_id)
     if not paper:
         return []
 
-    # coerce_id + skip, not p["id"]: papers/ may hold a .md with no id (a
-    # hand-written note, or one whose id was quoted), and a bare KeyError here
-    # failed paper_find_related for every paper in the vault until it was fixed.
-    all_papers = {}
-    for candidate in get_all_papers():
-        candidate_id = coerce_id(candidate.get("id"))
-        if candidate_id is not None:
-            all_papers[candidate_id] = candidate
-    index = relation_index(all_papers.values())
+    # One index for everything below: relation_index skips what coerce_id
+    # rejects (a note with no id, a quoted one) — papers/ may hold either, and a
+    # bare KeyError here used to fail paper_find_related for every paper in the
+    # vault until it was fixed. It replaces two chained builds of the same map:
+    # a local coerce_id loop whose values were then re-indexed with int().
+    index = relation_index(get_all_papers())
 
     declared = {e["target"]: e for e in relations_of(paper)}
-    legacy_ids = {int(r) for r in (paper.get("related_papers") or [])
-                  if isinstance(r, int) or (isinstance(r, str) and str(r).isdigit())}
 
     # ── inferred candidates: wikilinks in the body + shared keywords ──────
     inferred: set[int] = set()
     wikilinks = extract_wikilinks(paper.get("body", ""))
     for link in wikilinks:
         link_lower = link.lower()
-        for pid, pdata in all_papers.items():
+        for pid, pdata in index.items():
             short_name = (pdata.get("short_name") or "").lower()
             if short_name == link_lower:
                 inferred.add(pid)
@@ -69,14 +64,14 @@ def find_related(paper_id: int, relation_type: Optional[str] = None) -> list[dic
                     break
 
     paper_kw = set(k.lower() for k in paper.get("keywords", []))
-    for pid, pdata in all_papers.items():
+    for pid, pdata in index.items():
         if pid == paper_id:
             continue
         if len(paper_kw & set(k.lower() for k in pdata.get("keywords", []))) >= MIN_SHARED_KEYWORDS:
             inferred.add(pid)
 
     results = []
-    for rid in (set(declared) | legacy_ids | inferred):
+    for rid in (set(declared) | inferred):
         if rid == paper_id:
             continue
         rpaper = index.get(rid)
@@ -90,7 +85,7 @@ def find_related(paper_id: int, relation_type: Optional[str] = None) -> list[dic
             direction = entry["direction"] or derive_direction(paper.get("year"), rpaper.get("year"))
             note = entry["note"]
         else:
-            source = "legacy" if rid in legacy_ids else "inferred"
+            source = "inferred"
             rel_type = infer_type(paper, rpaper)
             direction = derive_direction(paper.get("year"), rpaper.get("year"))
             note = ""

@@ -7,15 +7,13 @@ import sys
 import json
 from pathlib import Path
 
-# Ensure UTF-8 encoding on Windows
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
-from mcp_server.config import PAPERS_DIR
-from mcp_server.markdown_parser import get_all_papers
+from mcp_server.console import force_utf8  # noqa: E402
+from mcp_server.markdown_parser import get_all_papers  # noqa: E402
+
+force_utf8()
 
 
 def main():

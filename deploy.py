@@ -6,8 +6,8 @@ dependency management live in `pyproject.toml` (`pip install -e .`).
 What it does:
   1. Reads `settings.json` from the skill directory (copy `settings.example.json`
      to get started).
-  2. Renders `templates/.mcp.json` and `templates/.claude-settings.json`
-     with actual SKILL_DIR / PYTHON_CMD paths into `output/`.
+  2. Renders `templates/.claude-settings.json` with actual SKILL_DIR /
+     PYTHON_CMD paths into `output/`.
   3. If `project_dir` is set in settings.json, copies the hooks
      (`output/.claude-settings.json`) to `<project_dir>/.claude/settings.json`.
   4. Prints the `claude mcp add --scope user` command that registers the MCP
@@ -31,22 +31,20 @@ Usage:
 """
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-# Same GBK-console policy as bootstrap.py and the tools/: the Chinese check
-# lines and the user-controlled echoes (vault paths, python_cmd, claude
-# output) must never UnicodeEncodeError the installer.
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
+from mcp_server import SERVER_IMPORTS
 from mcp_server import config
+from mcp_server.console import force_utf8, spawnable
 from mcp_server.hf_offline import prefer_cached_model
+
+# Shared with bootstrap.py, the hooks and the tools/ so the encoding policy
+# cannot drift per file (three of the copies used to omit errors="replace").
+force_utf8()
 
 SKILL_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SKILL_DIR / "output"
@@ -57,10 +55,14 @@ SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
 # The placeholder vault_dir in settings.example.json, verbatim.
 SETTINGS_EXAMPLE_VAULT = "D:/my-papers/knowledge-base"
 
-# What the MCP server imports at startup. ChromaDB's built-in ONNX embedder
-# (all-MiniLM-L6-v2) needs none of torch, so sentence_transformers is only
-# required for other models — see probe_python().
-SERVER_IMPORTS = ("chromadb", "frontmatter", "watchfiles", "pydantic")
+# The registered server's name. Used to come out of templates/.mcp.json, which
+# this script stopped deploying along with project-scope registration; warn_if_
+# shadowed() still looks for that file on disk, because a leftover from an older
+# version of this installer outranks the user-scope registration.
+MCP_SERVER_NAME = "paper_kb_mcp"
+
+# ChromaDB's built-in ONNX embedder needs none of torch, so
+# sentence_transformers is only required for other models — see probe_python().
 ONNX_EMBEDDER = "all-MiniLM-L6-v2"
 
 
@@ -107,11 +109,11 @@ def load_settings() -> dict:
         example = SETTINGS_EXAMPLE.name if SETTINGS_EXAMPLE.exists() else "settings.example.json"
         print(f"[ERROR] Cannot find {SETTINGS_FILE}")
         print()
-        print(f"  This file is git-ignored, so a fresh clone does not contain it.")
-        print(f"  Create it first:")
+        print("  This file is git-ignored, so a fresh clone does not contain it.")
+        print("  Create it first:")
         print(f"      cp {example} settings.json")
-        print(f"  Then edit the 3 required fields: vault_dir, project_dir, python_cmd,")
-        print(f"  and re-run this command.")
+        print("  Then edit the 3 required fields: vault_dir, project_dir, python_cmd,")
+        print("  and re-run this command.")
         sys.exit(1)
 
     # utf-8-sig, matching mcp_server/config.py and bootstrap.py: Notepad's
@@ -242,15 +244,7 @@ def generate_config(register: bool = False, hf_endpoint: str = ""):
 
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    mcp_template = TEMPLATES_DIR / ".mcp.json"
-    if mcp_template.exists():
-        rendered = render_template(mcp_template, variables)
-        output_path = OUTPUT_DIR / ".mcp.json"
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(rendered)
-        print(f"  [OK] output/.mcp.json")
-
-    name = mcp_server_name()
+    name = MCP_SERVER_NAME
 
     claude_template = TEMPLATES_DIR / ".claude-settings.json"
     if claude_template.exists():
@@ -258,7 +252,7 @@ def generate_config(register: bool = False, hf_endpoint: str = ""):
         output_path = OUTPUT_DIR / ".claude-settings.json"
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(rendered)
-        print(f"  [OK] output/.claude-settings.json")
+        print("  [OK] output/.claude-settings.json")
 
     print()
 
@@ -283,22 +277,13 @@ def generate_config(register: bool = False, hf_endpoint: str = ""):
             warn_if_shadowed(project_path, name)
     else:
         print("  Next:")
-        print(f"  cp output/.claude-settings.json <project>/.claude/settings.json")
+        print("  cp output/.claude-settings.json <project>/.claude/settings.json")
 
     print()
     register_mcp_server(name, skill_dir, python_cmd, register, hf_endpoint)
     print()
     check_skill_discovery(project_dir)
     print("=" * 55)
-
-
-def mcp_server_name() -> str:
-    """The MCP server name, read from the render so the template stays the source."""
-    try:
-        data = json.loads((OUTPUT_DIR / ".mcp.json").read_text(encoding="utf-8"))
-        return next(iter(data["mcpServers"]))
-    except (OSError, ValueError, KeyError, StopIteration):
-        return "paper_kb_mcp"
 
 
 def _hook_scripts(entries) -> set:
@@ -360,7 +345,7 @@ def deploy_project_settings(dest: Path, ours: dict):
         existing = json.loads(dest.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as e:
         print(f"  [WARN] {dest} 已存在但无法解析（{type(e).__name__}: {e}），没有动它。")
-        print(f"         请手动把 output/.claude-settings.json 的 hooks 合并进去。")
+        print("         请手动把 output/.claude-settings.json 的 hooks 合并进去。")
         return
     if not isinstance(existing, dict):
         print(f"  [WARN] {dest} 的顶层不是 JSON 对象，没有动它。")
@@ -427,23 +412,6 @@ def registration_command(name: str, skill_dir: str, python_cmd: str,
     return argv + ["--", python_cmd, "-m", "mcp_server"]
 
 
-def runnable(argv):
-    """`argv` with argv[0] resolved enough for this platform to actually launch.
-
-    On Windows, npm installs Claude Code as a `claude.cmd` shim, and
-    CreateProcess cannot start a .cmd directly — it needs cmd.exe. A bare list
-    would work on a machine with claude.exe and fail on one with the shim.
-    Returns None when the command is nowhere on PATH, so the caller can fall
-    back to printing it.
-    """
-    exe = shutil.which(argv[0])
-    if exe is None:
-        return None
-    if os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
-        return ["cmd.exe", "/c", exe] + list(argv[1:])
-    return [exe] + list(argv[1:])
-
-
 def register_mcp_server(name: str, skill_dir: str, python_cmd: str, run_it: bool,
                         hf_endpoint: str = ""):
     """Tell the user how to register at user scope — or do it, with --register.
@@ -464,9 +432,9 @@ def register_mcp_server(name: str, skill_dir: str, python_cmd: str, run_it: bool
         print("  或让本脚本代跑:  python deploy.py --register")
         return
 
-    resolved = runnable(argv)
+    resolved = spawnable(argv)
     if resolved is None:
-        print(f"  [WARN] PATH 上找不到 claude 命令，请手动执行：")
+        print("  [WARN] PATH 上找不到 claude 命令，请手动执行：")
         print(f"    {printable}")
         return
 

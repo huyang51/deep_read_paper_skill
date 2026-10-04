@@ -92,3 +92,30 @@ INSIGHTS_DIR = VAULT_DIR / "insights"
 CHROMA_DIR = VAULT_DIR / ".chromadb"
 EMBEDDING_MODEL = _load_config_val("embedding_model", "paraphrase-multilingual-MiniLM-L12-v2")
 COLLECTION_NAME = "paper_memories"
+
+
+def sanitize_error(text: str) -> str:
+    """Mask local absolute paths in text that goes back to the user.
+
+    Exception strings carry file paths (FileNotFoundError prints the whole path;
+    our own messages name the vault), and every tool error — and every tool
+    *result*, since a degraded vector index reports itself inside a JSON-RPC
+    success — lands in the session transcript, which users share, screenshot and
+    paste far more freely than a server-side log. The machine layout is nobody
+    else's business, and masking costs nothing. Longest root first, so a vault
+    under the home directory is masked as <vault>, not as ~/.
+
+    Lives here because the roots it knows are this module's own. Both entry
+    points need it: the MCP tool had it, the CLI's degrade branch did not.
+    """
+    candidates = []
+    for root, tag in ((VAULT_DIR, "<vault>"), (SKILL_DIR, "<skill>"),
+                      (Path.home(), "~")):
+        try:
+            candidates.append((str(Path(root).resolve()), tag))
+        except OSError:
+            continue
+    for path_str, tag in sorted(candidates, key=lambda p: len(p[0]), reverse=True):
+        if len(path_str) > 3:  # never replace short strings like "C:\" wholesale
+            text = text.replace(path_str, tag)
+    return text

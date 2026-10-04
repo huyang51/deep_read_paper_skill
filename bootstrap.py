@@ -39,15 +39,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-# GBK consoles crash on this script's Chinese progress lines — and on the
-# user-controlled strings echoed through it (vault_dir, python_cmd, the claude
-# register output), where even a single emoji in a path killed the installer.
-# Same policy as the tools/: always UTF-8 stdout, replace what cannot encode.
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
 SKILL_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SKILL_DIR))
+
+# mcp_server/__init__.py and mcp_server/console.py are stdlib-only on purpose:
+# this script runs before any dependency is installed, and it must set the
+# console encoding before its first Chinese progress line (a GBK console used to
+# crash on vault_dir / python_cmd / claude output echoes here).
+from mcp_server import MODEL_IMPORTS, SERVER_IMPORTS  # noqa: E402
+from mcp_server.console import force_utf8, spawnable  # noqa: E402
+
+force_utf8()
 SETTINGS_FILE = SKILL_DIR / "settings.json"
 SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
 REQUIREMENTS = SKILL_DIR / "requirements.txt"
@@ -57,11 +59,6 @@ DEFAULT_ENV_NAME = "paper-kb"
 # Marks the re-exec into the conda env, so a failed install there reports the
 # problem instead of spawning itself forever.
 REEXEC_FLAG = "PAPER_KB_BOOTSTRAP_REEXEC"
-
-# What the MCP server imports at startup, plus the embedder for the default
-# (multilingual) model. Keep in sync with deploy.SERVER_IMPORTS.
-SERVER_IMPORTS = ("chromadb", "frontmatter", "watchfiles", "pydantic")
-MODEL_IMPORTS = ("sentence_transformers",)
 
 MIN_PYTHON = (3, 9)          # what the code actually needs (no PEP 604 syntax)
 ENV_PYTHON = "3.10"          # what a freshly created env gets
@@ -92,25 +89,16 @@ def missing_imports(modules=SERVER_IMPORTS + MODEL_IMPORTS) -> list:
     return broken
 
 
-def launchable(argv: list) -> list:
-    """argv that CreateProcess can actually start.
-
-    On Windows `conda` resolves to `condabin/conda.bat`, and a .bat/.cmd is not
-    an executable — CreateProcess fails with WinError 193 and the error reads
-    like conda is broken rather than like it needs a shell in front.
-    """
-    exe = shutil.which(argv[0])
-    if exe and os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
-        return ["cmd.exe", "/c", exe, *argv[1:]]
-    return [exe or argv[0], *argv[1:]]
-
-
 def conda_base() -> Path:
     """The conda installation root, or None."""
     if not shutil.which("conda"):
         return None
+    cmd = ["conda", "info", "--base"]
     try:
-        proc = subprocess.run(launchable(["conda", "info", "--base"]),
+        # `or cmd`: conda was just found on PATH; if it vanished in between,
+        # running the bare name lets the OSError report that, rather than
+        # quietly returning None from a helper the caller cannot use.
+        proc = subprocess.run(spawnable(cmd) or cmd,
                               capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -254,8 +242,8 @@ def install_into_env(name: str, base: Path, light: bool = False):
 
     if not target.exists():
         log(f"  [1/2] 创建 conda 环境 {name} (python={ENV_PYTHON}) ……")
-        proc = subprocess.run(launchable(["conda", "create", "-n", name,
-                                          f"python={ENV_PYTHON}", "-y"]))
+        cmd = ["conda", "create", "-n", name, f"python={ENV_PYTHON}", "-y"]
+        proc = subprocess.run(spawnable(cmd) or cmd)
         if proc.returncode != 0 or not target.exists():
             die(f"conda create 失败。手动执行：conda create -n {name} python={ENV_PYTHON} -y")
     else:
@@ -393,7 +381,7 @@ def main(argv=None):
     log()
     if state == "kept":
         log(f"  [注意] {SETTINGS_FILE.name} 已存在，保持原样。")
-        log(f"         要按上面的路径重写：python bootstrap.py --force（先备份）")
+        log("         要按上面的路径重写：python bootstrap.py --force（先备份）")
     else:
         log(f"  [OK] 写入 {SETTINGS_FILE}"
             + ("（原文件备份为 settings.json.bak）" if state == "overwritten" else ""))
@@ -407,7 +395,7 @@ def main(argv=None):
             if args.seed_obsidian:
                 added = seed_obsidian(vault)
                 if added:
-                    log(f"  [OK] 已补齐缺失的 Obsidian 文件（只增不改）：")
+                    log("  [OK] 已补齐缺失的 Obsidian 文件（只增不改）：")
                     for item in added:
                         log(f"       + {item}")
                 else:

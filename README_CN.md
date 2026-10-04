@@ -290,7 +290,7 @@ python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"
 |------|------|
 | `paper_search` | 通过 ChromaDB 语义搜索（支持中英文） |
 | `paper_get` | 按 ID 获取论文完整信息 |
-| `paper_find_related` | 查找关联论文——已声明关系优先，其次旧 `related_papers`，再次关键词推断候选（每条结果带 `source` / `relation_type` / `direction`） |
+| `paper_find_related` | 查找关联论文——已声明的 `relations` 优先，其次关键词推断候选（`related_papers` 只是投影、不再作为候选来源；每条结果带 `source` / `relation_type` / `direction`） |
 | `paper_search_by_method` | 按方法类别检索 |
 | `paper_index_stats` | 获取知识库统计信息 |
 | `paper_index` | 创建/更新论文结构化条目，含 `relations` 声明（写入侧，由流程调用，通常无需手写）；同步互指条目与图谱边 |

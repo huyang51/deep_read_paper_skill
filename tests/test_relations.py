@@ -118,14 +118,16 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("unknown_target", codes)
         self.assertIn("self_reference", codes)
 
-    def test_legacy_vault_reports_unmigrated_not_broken(self):
-        """A pre-migration vault must keep working: no relations means no
-        reciprocity claim to violate — only a migration hint."""
+    def test_legacy_vault_is_reported_as_unmigrated(self):
+        """A pre-migration vault is not *read* any more: relations is the only
+        source, so bare related_papers ids are an error naming the fix — they
+        would otherwise be dropped by the next write, silently."""
         a = self._paper(1, 2020, related_papers=[2])
         b = self._paper(2, 2019, related_papers=[1])
         issues = R.validate_relations([a, b])
         self.assertEqual({i["code"] for i in issues}, {"unmigrated"})
-        self.assertTrue(all(i["severity"] == R.WARN for i in issues))
+        self.assertTrue(all(i["severity"] == R.ERROR for i in issues))
+        self.assertTrue(all("migrate_relations" in i["message"] for i in issues))
 
     def test_year_conflict_is_a_warning_not_an_error(self):
         # A preprint posted after the "successor" it claims to precede is a real
@@ -154,7 +156,9 @@ class ValidateTest(unittest.TestCase):
                                    "note": "n"}], related_papers=[2, 7])
         b = self._paper(2, 2020, [{"target": 1, "type": "method_similar", "direction": "peer",
                                    "note": "n"}], related_papers=[1])
-        self.assertIn("legacy_drift", self.codes([a, b]))
+        # related_papers is a derived projection now, so an id it carries that no
+        # declaration covers is a hand edit — projection_drift, at error grade.
+        self.assertIn("projection_drift", self.codes([a, b]))
 
 
 class DeriveTest(unittest.TestCase):
@@ -279,9 +283,19 @@ class TempVaultCase(unittest.TestCase):
                 "keywords": ["k"], "body": body, "read_mode": "deep"}
         if relations:
             data["relations"] = relations
+        path = self.mp.create_paper_file(data, self.papers)
         if related:
-            data["related_papers"] = related
-        return self.mp.create_paper_file(data, self.papers)
+            # A pre-migration note can no longer be *created* through the parser:
+            # related_papers is derived from relations, never an input. So the
+            # legacy shape is written the way an old vault has it on disk — bare
+            # list in frontmatter, no relations block at all.
+            paper = self.mp.parse_paper(path)
+            metadata = {k: v for k, v in paper.items() if k not in ("body", "file")}
+            metadata["related_papers"] = list(related)
+            metadata.pop("relations", None)
+            self.mp._write_paper(path, metadata, paper.get("body", ""))
+            self.mp.invalidate_papers_cache()
+        return path
 
     def _read(self, pid):
         return self.mp.get_paper_by_id(pid, self.papers)
@@ -360,7 +374,7 @@ class VaultTest(TempVaultCase):
              "body": "updated body", "read_mode": "deep"}, self.papers)
 
         paper = self._read(2)
-        self.assertEqual(R.relation_targets(paper), [1])
+        self.assertEqual(R.project_related_papers(R.relations_of(paper)), [1])
         self.assertEqual(paper["read_mode"], "deep")   # was dropped before the fix
 
     def test_update_paper_relations_is_surgical(self):
@@ -395,7 +409,7 @@ class VaultTest(TempVaultCase):
             {"target": 1, "type": "evolutionary", "direction": "predecessor",
              "note": "基于它"}])
         self.mp.sync_paper_relations(self._read(2), self.papers)
-        self.assertEqual(R.relation_targets(self._read(1)), [2])   # mirror in place
+        self.assertEqual(R.project_related_papers(R.relations_of(self._read(1))), [2])   # mirror in place
         self.assertIn("[[New]]", self._read(1)["body"])            # edge in place
 
         self.assertTrue(self.mp.update_paper_relations(2, [], self.papers))  # cleared
@@ -426,7 +440,7 @@ class VaultTest(TempVaultCase):
 
         self.assertEqual(result["healed"], [1])
         self.assertEqual(R.relations_of(self._read(1)), [])        # stale mirror gone
-        self.assertEqual(R.relation_targets(self._read(3)), [1])   # hand entry kept
+        self.assertEqual(R.project_related_papers(R.relations_of(self._read(3))), [1])   # hand entry kept
 
     def test_reindex_without_the_relations_key_never_heals(self):
         """An update that omits relations preserves them (the losslessness rule)
@@ -441,7 +455,7 @@ class VaultTest(TempVaultCase):
         result = self.mp.sync_paper_relations(self._read(2), self.papers)
 
         self.assertEqual(result["healed"], [])
-        self.assertEqual(R.relation_targets(self._read(1)), [2])
+        self.assertEqual(R.project_related_papers(R.relations_of(self._read(1))), [2])
 
     def test_heal_strips_the_edge_self_owns_too(self):
         """When the cleared paper was the EARLIER one, the edge lived in its own
@@ -516,9 +530,14 @@ class ArrowCliTest(TempVaultCase):
                               encoding="utf-8", errors="replace")
 
     def test_clean_vault_exits_zero_under_gbk(self):
+        # Declared on both sides: `relations` is the only source now, so a clean
+        # vault means a reciprocal pair, not two bare related_papers lists.
         self._make(1, "Old", 2023, body="与 **New** 互补。\n\n## 后续引用\n\n- [[New]]",
-                   related=[2])
-        self._make(2, "New", 2025, body="与 **Old** 互补。", related=[1])
+                   relations=[{"target": 2, "type": "complementary",
+                               "direction": "successor", "note": "被它补全"}])
+        self._make(2, "New", 2025, body="与 **Old** 互补。",
+                   relations=[{"target": 1, "type": "complementary",
+                               "direction": "predecessor", "note": "基于它"}])
 
         r = self._run()
         self.assertNotIn("UnicodeEncodeError", r.stderr)
@@ -569,8 +588,11 @@ class ArrowCliTest(TempVaultCase):
         the same mark count twice under opposite rules."""
         self._make(1, "Old", 2023,
                    body="顺手提到 [[New]] 一次。\n\n## 后续引用\n\n- [[New]]",
-                   related=[2])
-        self._make(2, "New", 2025, body="与 **Old** 互补。")
+                   relations=[{"target": 2, "type": "complementary",
+                               "direction": "successor", "note": "被它补全"}])
+        self._make(2, "New", 2025, body="与 **Old** 互补。",
+                   relations=[{"target": 1, "type": "complementary",
+                               "direction": "predecessor", "note": "基于它"}])
 
         r = self._run()
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)

@@ -24,18 +24,18 @@ import re
 from pathlib import Path
 from typing import Optional
 
-# Ensure UTF-8 output on Windows (GBK console mangles CJK + arrows): every
-# success/failure line here carries ✅/❌/⚠️, and a UnicodeEncodeError on the
-# *clean* verdict crashed with exit 1 — the exact opposite of what it said.
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
-from mcp_server.markdown_parser import _split_followup, get_all_papers
-from mcp_server.relations import ERROR, _mentions, relations_of, validate_relations
-from mcp_server.markdown_parser import coerce_id
+from mcp_server.console import force_utf8  # noqa: E402
+from mcp_server.markdown_parser import _split_followup, get_all_papers  # noqa: E402
+from mcp_server.relations import (  # noqa: E402
+    ERROR, _mentions, coerce_id, relation_index, relations_of, validate_relations,
+)
+
+# Every success/failure line here carries ✅/❌/⚠️, and a UnicodeEncodeError on
+# the *clean* verdict crashed with exit 1 — the exact opposite of what it said.
+force_utf8()
 
 
 def extract_year(paper: dict) -> Optional[int]:
@@ -49,27 +49,10 @@ def extract_year(paper: dict) -> Optional[int]:
         return None
 
 
-def get_body_wikilinks(paper: dict) -> list[str]:
-    """Extract [[wikilinks]] from paper body."""
-    body = paper.get("body", "")
-    return re.findall(r"\[\[([^\]]+)\]\]", body)
-
-
 def get_body_bold_refs(paper: dict, target_short_name: str) -> int:
     """Count **Target** bold references in body."""
     body = paper.get("body", "")
     return len(re.findall(rf"\*\*{re.escape(target_short_name)}\*\*", body))
-
-
-def _by_id(papers: list[dict]) -> dict:
-    """papers indexed by coerced id — a quoted or spaced hand-written ``id:``
-    used to make every lookup silently miss and the checks report nothing."""
-    index = {}
-    for p in papers:
-        pid = coerce_id(p.get("id"))
-        if pid is not None:
-            index[pid] = p
-    return index
 
 
 def _edge_justified(paper: dict, related: dict) -> bool:
@@ -94,7 +77,7 @@ def verify_relevance(papers: list[dict]) -> list[str]:
     pair — they used to disagree on section-scoped matching.
     """
     issues = []
-    index = _by_id(papers)
+    index = relation_index(papers)
 
     for paper in papers:
         cur_short = paper.get("short_name", "")
@@ -133,7 +116,7 @@ def verify_arrows(papers: list[dict]) -> list[str]:
     """
     issues = []
     declared = set()
-    index = _by_id(papers)
+    index = relation_index(papers)
     for paper in papers:
         pid = coerce_id(paper.get("id"))
         for entry in relations_of(paper):

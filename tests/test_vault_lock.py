@@ -13,7 +13,6 @@ Run from repo root:  python -m unittest discover -s tests -v
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from pathlib import Path
 
@@ -21,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mcp_server import config  # noqa: E402
 from mcp_server import markdown_parser as mp  # noqa: E402
+from mcp_server import relations  # noqa: E402
 
 
 def paper_data(**kw):
@@ -70,7 +70,7 @@ class VaultWriteLockTest(TempVaultCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(len(results), 4)
-        ids = sorted(mp.coerce_id(mp.parse_paper(p)["id"]) for p in results)
+        ids = sorted(relations.coerce_id(mp.parse_paper(p)["id"]) for p in results)
         self.assertEqual(ids, [1, 2, 3, 4])
 
     def test_held_lock_blocks_and_times_out(self):

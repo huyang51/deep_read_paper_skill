@@ -292,7 +292,7 @@ Ask Claude Code directly:
 |------|-------------|
 | `paper_search` | Semantic search via ChromaDB (supports Chinese & English) |
 | `paper_get` | Retrieve full paper details by ID |
-| `paper_find_related` | Find related papers — declared relations first, then legacy `related_papers`, then keyword-inferred candidates (each result carries `source`, `relation_type`, `direction`) |
+| `paper_find_related` | Find related papers — declared `relations` first, then keyword-inferred candidates (`related_papers` is only the projection, never a source; each result carries `source`, `relation_type`, `direction`) |
 | `paper_search_by_method` | Filter by method category |
 | `paper_index_stats` | Knowledge base statistics |
 | `paper_index` | Create or update a paper's structured entry, `relations` included (write side — used by the workflow, not usually by hand); syncs reciprocal entries and graph edges |

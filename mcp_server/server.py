@@ -8,22 +8,24 @@ from pathlib import Path
 from watchfiles import awatch, Change
 
 from mcp_server import config
-from mcp_server.config import PAPERS_DIR
+from mcp_server.config import PAPERS_DIR, sanitize_error
+from mcp_server.console import force_utf8
 from mcp_server.models import (
     SearchInput, GetPaperInput, FindRelatedInput, SearchByMethodInput,
     PaperIndexInput, PaperRemoveInput, ResponseFormat,
     CiteVerifyInput, PaperCitationsInput,
 )
-from mcp_server import cite_api
+from mcp_server import __version__, cite_api
 from mcp_server.markdown_parser import (
-    coerce_id, get_paper_by_id, get_all_papers, get_scan_errors, extract_wikilinks,
-    cleanup_after_deletion, create_paper_file, delete_paper_file, parse_paper,
-    invalidate_papers_cache, sync_paper_relations,
+    get_paper_by_id, get_all_papers, get_scan_errors, extract_wikilinks,
+    cleanup_after_deletion, delete_paper_file, invalidate_papers_cache,
 )
 from mcp_server.chroma_store import ChromaStore
 from mcp_server.cross_refs import find_related
-from mcp_server.relations import (describe, normalize_relations, relation_index,
-                                  relations_of, validate_relations, WARN)
+from mcp_server.indexing import IndexWriteError, index_paper
+from mcp_server.relations import (
+    coerce_id, describe, normalize_relations, relation_index, relations_of,
+)
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("paper_kb_mcp")
@@ -112,34 +114,14 @@ def get_store() -> ChromaStore:
     return _store
 
 
-def _sanitize_error(text: str) -> str:
-    """Mask local absolute paths in error text sent back to the client.
-
-    Exception strings carry file paths (FileNotFoundError prints the whole
-    path; our own messages name the vault), and every tool error lands in the
-    session transcript — which users share, screenshot and paste far more
-    freely than a server-side log. The machine layout is nobody else's
-    business, and masking costs nothing: replies only ever mention these
-    roots when something went wrong around them. Longest first, so a vault
-    under the home directory is masked as <vault>, not as ~/….
-    """
-    candidates = []
-    for root, tag in ((config.VAULT_DIR, "<vault>"),
-                      (config.SKILL_DIR, "<skill>"),
-                      (Path.home(), "~")):
-        try:
-            candidates.append((str(Path(root).resolve()), tag))
-        except OSError:
-            continue
-    for path_str, tag in sorted(candidates, key=lambda p: len(p[0]), reverse=True):
-        if len(path_str) > 3:  # never replace short strings like "C:\" wholesale
-            text = text.replace(path_str, tag)
-    return text
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# IMPORTANT: The TOOLS list below must be manually kept in sync with the Pydantic
-# models in models.py (SearchInput, PaperIndexInput, etc.). When adding/changing
-# a field in the Pydantic model, update the corresponding inputSchema here too.
+# The TOOLS list below is the inputSchema the model sees, and models.py is what
+# each handler validates against — they are two descriptions of one contract, so
+# a field added to a model must be added here too. tests/test_tools_schema.py
+# cross-checks the two (properties, required sets, and the enum vocabularies
+# against relations.py), so the pairing is enforced rather than remembered:
+# deleting a model field without its schema property fails there, not in the
+# vault.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── tool definitions ───────────────────────────────────────────────────────
@@ -228,7 +210,6 @@ TOOLS = [
                         "required": ["target", "type", "direction"]
                     }
                 },
-                "related_papers": {"type": "array", "items": {"type": "integer"}, "default": [], "description": "关联论文ID列表（兼容字段：relations 的投影，工具自动维护，手填时只写 relations）"},
                 "date_read": {"type": "string", "default": "", "pattern": "^\\d{4}-\\d{2}-\\d{2}$|^$", "description": "阅读日期 YYYY-MM-DD（或空串；模型侧 pattern 同约束）"},
                 "read_mode": {"type": "string", "enum": ["quick", "standard", "deep"], "pattern": "^(quick|standard|deep)$", "default": "standard", "description": "Phase 0 分诊档位：quick 速览卡 | standard 默认档（单上下文一遍通读+统一QA）| deep=超长档（>60页三组编排+矛盾检测+统一QA）"},
                 "aliases": {"type": "array", "items": {"type": "string"}, "default": [], "description": "别名列表（用于 Obsidian 图谱显示和搜索）"},
@@ -330,13 +311,10 @@ async def handle_paper_search(params: dict) -> str:
 
 
 def _json_serializer(obj):
-    """Custom JSON serializer for date and other non-serializable types."""
-    from datetime import date
-    if isinstance(obj, date):
-        return str(obj)
-    if hasattr(obj, '__str__'):
-        return str(obj)
-    return repr(obj)
+    """json.dumps(default=...): dates, Paths and anything else JSON cannot
+    serialize are stringified — every object has __str__, so there is no
+    second fallback branch to reach."""
+    return str(obj)
 
 
 async def handle_paper_get(params: dict) -> str:
@@ -442,77 +420,22 @@ async def handle_paper_index(params: dict) -> str:
     # normalize_relations is forgiving: a malformed entry is dropped so one
     # typo can never break the write. Dropping silently, however, means the
     # agent believes the relation was recorded — surface the warnings instead.
+    # (The CLI takes the opposite route: it refuses. That difference belongs to
+    # the caller, so it is not a parameter of the shared pipeline.)
     relations, rel_warnings = normalize_relations(paper_dict.get("relations"))
     paper_dict["relations"] = relations
 
     try:
-        filepath = create_paper_file(paper_dict)
+        payload = index_paper(
+            paper_dict, get_store,
+            f"论文已{'更新' if is_update else '创建'}: {paper_dict.get('title')}",
+            (["relations 有条目被忽略：" + "；".join(rel_warnings)] if rel_warnings else ()),
+        )
+    except IndexWriteError as e:
+        return json.dumps({"error": sanitize_error(str(e))})
     except Exception as e:
-        return json.dumps({"error": _sanitize_error(f"创建论文文件失败: {e}")})
+        return json.dumps({"error": sanitize_error(f"创建论文文件失败: {e}")})
 
-    paper = parse_paper(filepath)
-    if not paper:
-        return json.dumps({"error": "创建论文文件失败"})
-
-    # Structured relations are the source of truth: mirror them onto the papers
-    # this one points at (reciprocal entries + related_papers projection) and
-    # place the ## 后续引用 graph edges by declared direction instead of
-    # assuming "the paper just indexed is the newest". This runs even when the
-    # paper now declares nothing: clearing relations is exactly when stale
-    # mirrors on the other side need the self-heal.
-    #
-    # This runs BEFORE the vector index on purpose: frontmatter and graph edges
-    # are the durable part of an index and must not be lost because the store
-    # could not be built (missing embedding model, offline download).
-    sync = sync_paper_relations(paper)
-    if (sync.get("mirrored") or sync.get("derived") or sync.get("edges_updated")
-            or sync.get("healed")):
-        invalidate_papers_cache()
-
-    payload = {
-        "status": "ok",
-        "paper_id": paper["id"],
-        "file": paper.get("file", str(filepath)),
-        "message": f"论文已{'更新' if is_update else '创建'}: {paper.get('title')}"
-    }
-    warnings = []
-    if rel_warnings:
-        # normalize_relations dropped malformed entries so the write could go
-        # through; the caller must know the recorded relations are fewer than
-        # the ones it sent.
-        warnings.append("relations 有条目被忽略：" + "；".join(rel_warnings))
-    if relations_of(paper) or sync.get("healed"):
-        payload["relations_synced"] = {
-            "mirrored_to": sync.get("mirrored", []),
-            "unresolved_targets": sync.get("missing", []),
-            "legacy_migrated": sync.get("derived", []),
-            "graph_edges_updated": sync.get("edges_updated", []),
-            "stale_mirrors_removed": sync.get("healed", []),
-        }
-        if sync.get("missing"):
-            warnings.append(
-                f"relations 指向的论文 {sync['missing']} 不在库中——这些关系只有单向声明，"
-                f"图谱里不会出现对应节点。先在 vault 里索引对方论文，再重跑一次同步。"
-            )
-
-    try:
-        get_store().upsert_paper(str(paper["id"]), paper)
-        payload["vector_index"] = "ok"
-    except Exception as e:
-        # Degrade instead of failing the call: the paper file and its relations
-        # are already on disk; only semantic search is unavailable until the
-        # index is rebuilt.
-        # Sanitized like the JSON-RPC branch: this text lands in the tool
-        # RESULT (a JSON-RPC *success*), so without it absolute vault paths
-        # leaked into shared transcripts exactly where the error branch said
-        # they must not.
-        payload["vector_index"] = _sanitize_error(
-            f"failed: {type(e).__name__}: {e}")
-        warnings.append(_sanitize_error(
-            f"向量索引失败（论文文件与关系已正常写入，语义检索暂不可用）：{e}"))
-
-    if warnings:
-        payload["warning"] = " ".join(warnings)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -549,7 +472,7 @@ async def handle_paper_remove(params: dict) -> str:
         if rewritten:
             store.index_all_papers()
     except Exception as e:
-        warnings.append(_sanitize_error(
+        warnings.append(sanitize_error(
             f"向量索引未同步（论文文件与关系已正常删除）：{e}"))
 
     payload = {
@@ -628,7 +551,7 @@ TOOL_DISPATCH = {
 
 # ─── JSON-RPC handler ───────────────────────────────────────────────────────
 
-async def handle_request(method: str, request_id: Any, params: dict = None) -> dict:
+async def handle_request(method: str, request_id: Any, params: dict) -> dict:
     """Dispatch a JSON-RPC request."""
     if method == "initialize":
         return {
@@ -639,7 +562,9 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
                 "capabilities": {"tools": {}},
                 "serverInfo": {
                     "name": "paper_kb_mcp",
-                    "version": "1.1.0"
+                    # pyproject reads the same attribute, so the version the
+                    # client sees cannot drift from the package version.
+                    "version": __version__
                 }
             }
         }
@@ -672,7 +597,7 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "error": {"code": -32000,
-                          "message": _sanitize_error(f"知识库不可用：{STARTUP_ERROR}")}
+                          "message": sanitize_error(f"知识库不可用：{STARTUP_ERROR}")}
             }
         handler = TOOL_DISPATCH.get(tool_name)
         if not handler:
@@ -695,7 +620,7 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {"code": -32000, "message": _sanitize_error(str(e))}
+                "error": {"code": -32000, "message": sanitize_error(str(e))}
             }
     elif method.startswith("notifications/"):
         # Notifications get no reply, ever. Matching the prefix rather than one
@@ -720,8 +645,6 @@ async def handle_request(method: str, request_id: Any, params: dict = None) -> d
 
 def write_response(response: dict):
     """Write a JSON-RPC response to stdout."""
-    if response is None:
-        return
     line = json.dumps(response, ensure_ascii=False)
     sys.stdout.buffer.write((line + "\n").encode("utf-8"))
     sys.stdout.buffer.flush()
@@ -794,11 +717,7 @@ async def read_stdin(loop):
 
 async def main():
     """Main MCP server loop."""
-    # Ensure UTF-8 encoding for stdin/stdout on Windows (GBK default causes crashes)
-    if hasattr(sys.stdin, "reconfigure"):
-        sys.stdin.reconfigure(encoding="utf-8")
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
+    force_utf8(stdin=True)
 
     logger.info("Starting paper_kb_mcp server...")
 

@@ -61,7 +61,6 @@ def _http_get_json_retry(url: str, tries: int = 3, backoff: float = 4.0):
     """_http_get_json with retry on 429/5xx/timeout (Semantic Scholar's
     keyless pool rate-limits frequently). Returns (data, error_str)."""
     import time
-    data, err = None, None
     for attempt in range(tries):
         data, err = _http_get_json(url)
         if data is not None:
@@ -71,7 +70,8 @@ def _http_get_json_retry(url: str, tries: int = 3, backoff: float = 4.0):
         if not retryable or attempt == tries - 1:
             return None, err
         time.sleep(backoff)
-    return None, err
+    # unreachable: tries >= 1 always returns inside the loop (last attempt
+    # exits at the guard above), so no post-loop fallthrough exists.
 
 
 def _mailto() -> str:
@@ -121,9 +121,9 @@ def _venue_of(work: dict) -> str:
     return src.get("display_name") or ""
 
 
-def _authors_of(work: dict, limit: int = 6) -> list:
+def _authors_of(work: dict) -> list:
     names = []
-    for a in (work.get("authorships") or [])[:limit]:
+    for a in (work.get("authorships") or [])[:6]:
         dn = (a.get("author") or {}).get("display_name")
         if dn:
             names.append(dn)
@@ -162,14 +162,14 @@ def search_works(query: str, limit: int = 5):
     return [_brief(w) for w in (data or {}).get("results", [])], None
 
 
-def search_works_by_title(query: str, limit: int = 3):
+def search_works_by_title(query: str):
     """title.search filter fallback (friction F4, field evidence 2026-09-25):
     OpenAlex free-text search sometimes fails to surface the exact-title
     record at all (ReAct case). This filter matches on the title field only.
     Coverage gaps remain on both endpoints — cite_verify flags those deferred."""
     url = (f"{OPENALEX_BASE}/works?filter="
            + urllib.parse.quote(f"title.search:{query}", safe=":")
-           + f"&per-page={limit}&select={WORK_SELECT}{_mailto()}")
+           + f"&per-page=3&select={WORK_SELECT}{_mailto()}")
     data, err = _http_get_json_retry(url, tries=2, backoff=1.5)
     if err:
         return [], err
@@ -223,9 +223,6 @@ def resolve_openalex_id(doi: str = "", arxiv_id: str = "", openalex_id: str = ""
 
 
 # ────────────────────────────────── public API
-
-
-_VERDICE = ("exact", "probable", "uncertain", "not_found", "network_error")
 
 
 def cite_verify(query: str = "", author: str = "", year=None,

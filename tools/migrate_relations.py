@@ -34,26 +34,23 @@ Exit codes: 0 nothing to do / all clean | 2 plan differs from vault or warnings
             remain | 1 errors found (unresolved side of a relation) or bad args.
 """
 import argparse
-import json
 import sys
 from pathlib import Path
-
-# Ensure UTF-8 output on Windows (GBK console mangles CJK + arrows)
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
+from mcp_server.console import force_utf8  # noqa: E402
 from mcp_server.markdown_parser import (  # noqa: E402
-    FOLLOWUP_HEADER, _split_followup, get_all_papers, sync_paper_relations,
-    update_paper_relations,
+    _split_followup, get_all_papers, sync_paper_relations, update_paper_relations,
 )
 from mcp_server.relations import (  # noqa: E402
-    RELATION_TYPE_CN, RELATION_TYPES, coerce_id, derive_direction,
-    derive_relations, describe, infer_type, relation_index, relation_targets,
-    relations_of, validate_relations, ERROR, WARN,
+    RELATION_TYPE_CN, RELATION_TYPES, coerce_id, derive_relations, describe,
+    infer_type, relation_index, relations_of, validate_relations, ERROR, WARN,
 )
+
+# The plan output is full of CJK and arrows, which a GBK console cannot encode.
+force_utf8()
 
 
 def parse_type_overrides(pairs: list) -> dict:
@@ -258,7 +255,6 @@ def main(argv=None) -> int:
                         help="把论文 PAPER_ID 参与的关系类别固定为 TYPE（可重复）："
                              "--set-type 1=complementary 会同时钉住指向它的关系与它自己"
                              "声明的关系，两侧不会各写一个类别")
-    parser.add_argument("--out", default="", help="把计划/校验结果写成 JSON")
     args = parser.parse_args(argv)
 
     try:
@@ -280,9 +276,6 @@ def main(argv=None) -> int:
             print(("❌ " if i["severity"] == ERROR else "⚠️  ") + i["message"])
         print(f"\n关系校验：{len(papers)} 篇论文，{len(errors)} 个错误，"
               f"{len(issues) - len(errors)} 个提示。")
-        if args.out:
-            Path(args.out).write_text(json.dumps(issues, ensure_ascii=False, indent=2),
-                                      encoding="utf-8")
         # Docstring contract: 2 = warnings remain (1 was reserved for errors).
         return 1 if errors else (2 if issues else 0)
 
@@ -336,11 +329,6 @@ def main(argv=None) -> int:
 
     print()
     print(validate_summary(issues, errors, warns))
-
-    if args.out:
-        Path(args.out).write_text(json.dumps(
-            {"plans": plans, "issues": issues}, ensure_ascii=False, indent=2,
-            default=str), encoding="utf-8")
 
     if errors:
         return 1

@@ -18,7 +18,6 @@ Nothing here touches the real settings.json: SETTINGS_FILE is patched.
 
 Run from repo root:  python -m unittest discover -s tests -v
 """
-import json
 import sys
 import tempfile
 import unittest

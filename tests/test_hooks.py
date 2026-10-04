@@ -125,15 +125,18 @@ class SessionStartHookTest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         papers = Path(self._tmp.name) / "papers"
         papers.mkdir()
-        self._orig = (config.PAPERS_DIR, mp.PAPERS_DIR, self.hook.PAPERS_DIR)
+        # The hook itself has no PAPERS_DIR: it calls get_all_papers(), which
+        # reads markdown_parser's module global at call time. Only mp.PAPERS_DIR
+        # redirects it (config.PAPERS_DIR is patched alongside so the two never
+        # disagree about which vault is "current" mid-test).
+        self._orig = (config.PAPERS_DIR, mp.PAPERS_DIR)
         config.PAPERS_DIR = papers
         mp.PAPERS_DIR = papers
-        self.hook.PAPERS_DIR = papers
         mp.invalidate_papers_cache()
         self.addCleanup(self._restore)
 
     def _restore(self):
-        (config.PAPERS_DIR, mp.PAPERS_DIR, self.hook.PAPERS_DIR) = self._orig
+        (config.PAPERS_DIR, mp.PAPERS_DIR) = self._orig
         mp.invalidate_papers_cache()
 
     def test_empty_vault_context(self):

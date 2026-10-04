@@ -63,6 +63,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mcp_server import cite_api  # noqa: E402
+from mcp_server.console import force_utf8  # noqa: E402
 
 GATES = ("exists_ok", "discrepancy", "defer", "unresolved", "network", "empty")
 
@@ -169,7 +170,7 @@ def _evidence(result: dict, author: str):
     return cands[0]
 
 
-def classify(result: dict, author: str, year) -> str:
+def classify(result: dict, author: str) -> str:
     """cite_api verdict -> gate label. The rules that matter:
 
     * identifier-present-but-incomplete is DEFER (the API says so in its notes)
@@ -242,7 +243,7 @@ def build_ledger(refs, delay: float = 0.6, max_n: int = 60, verify=None):
             except Exception as exc:  # never let one row kill the batch
                 result = {"verdict": "network_error", "matches": [],
                           "notes": [f"{type(exc).__name__}: {exc}"]}
-            gate = classify(result, ref.get("author", ""), ref.get("year"))
+            gate = classify(result, ref.get("author", ""))
         # The gate reasons about _evidence()'s candidate (the author-matched
         # one); the ledger row — and the §6 table rendered from it — must show
         # THE SAME candidate, or an exists_ok verdict presents the lookalike's
@@ -370,8 +371,7 @@ def print_summary(ledger: dict, out_path: Path, md_path):
 # ────────────────────────────────── cli
 
 def main(argv=None):
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    force_utf8()
     ap = argparse.ArgumentParser(
         description="Batch existence-gate the external works a report names "
                     "(writes cite_ledger.json + an optional §6 markdown table).")

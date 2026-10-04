@@ -8,14 +8,17 @@ import json
 import re
 from pathlib import Path
 
-# Ensure UTF-8 encoding on Windows
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
-from mcp_server.config import PAPERS_DIR
+from mcp_server.config import PAPERS_DIR  # noqa: E402
+from mcp_server.console import force_utf8  # noqa: E402
+
+# stdin too, and not only for symmetry: Claude Code pipes the prompt as UTF-8
+# while a Windows console defaults to cp936, so json.load(sys.stdin) raised on
+# any CJK prompt and the `except` below turned that into `{}` — the keyword hint
+# silently never fired for the Chinese workflow this skill exists for.
+force_utf8(stdin=True)
 
 
 def load_keywords() -> list[str]:

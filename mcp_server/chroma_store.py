@@ -5,9 +5,8 @@ from chromadb.utils import embedding_functions
 from pathlib import Path
 from mcp_server.config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_MODEL
 from mcp_server.hf_offline import prefer_cached_model
-from mcp_server.markdown_parser import (
-    coerce_id, get_all_papers, get_scan_errors, parse_paper,
-)
+from mcp_server.markdown_parser import get_all_papers, get_scan_errors, parse_paper
+from mcp_server.relations import coerce_id
 
 
 def _as_year(value):

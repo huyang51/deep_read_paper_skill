@@ -22,7 +22,6 @@ Also covers the hand-edited-frontmatter coercions (``id`` as a quoted string,
 
 Run from repo root:  python -m unittest discover -s tests -v
 """
-import os
 import sys
 import tempfile
 import unittest
@@ -33,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mcp_server import config  # noqa: E402
 from mcp_server import markdown_parser as mp  # noqa: E402
+from mcp_server import relations  # noqa: E402
 from mcp_server.models import SearchInput  # noqa: E402
 
 
@@ -65,7 +65,19 @@ class TempVaultCase(unittest.TestCase):
         mp.invalidate_papers_cache()
 
     def make(self, *args, **kw):
-        return mp.create_paper_file(paper(*args, **kw), self.papers)
+        related = kw.pop("related_papers", None)
+        path = mp.create_paper_file(paper(*args, **kw), self.papers)
+        if related is not None:
+            # related_papers is a derived projection now, not an input field, so a
+            # test that needs the ids on disk (a legacy note, or a hand edit to
+            # check the drift report) writes them straight into the frontmatter and
+            # bypasses the writer — which would otherwise regenerate the list.
+            p = mp.parse_paper(path)
+            metadata = {k: v for k, v in p.items() if k not in ("body", "file")}
+            metadata["related_papers"] = list(related)
+            mp._write_paper(path, metadata, p.get("body", ""))
+            mp.invalidate_papers_cache()
+        return path
 
     def read(self, pid):
         return mp.get_paper_by_id(pid, self.papers)
@@ -77,13 +89,13 @@ class CoerceIdTest(unittest.TestCase):
     def test_accepts_int_and_quoted_forms(self):
         for value, expected in [(7, 7), ("7", 7), (" 7 ", 7), ("-3", -3)]:
             with self.subTest(value=value):
-                self.assertEqual(mp.coerce_id(value), expected)
+                self.assertEqual(relations.coerce_id(value), expected)
 
     def test_rejects_what_is_not_an_id(self):
         """`True` is an int in Python — index 1 of the vault it is not."""
         for value in (None, True, False, "abc", "7.5", "", [], {}):
             with self.subTest(value=value):
-                self.assertIsNone(mp.coerce_id(value))
+                self.assertIsNone(relations.coerce_id(value))
 
 
 class QuotedIdVaultTest(TempVaultCase):
@@ -307,16 +319,23 @@ class PathEscapeTest(TempVaultCase):
 
         self.assertEqual(mp.cleanup_after_deletion(2, "Gone", self.papers), [])
 
-    def test_cleanup_keeps_a_legacy_related_papers_entry_for_others(self):
-        """`related_papers` without a matching relation is still a reference,
-        and the ones pointing elsewhere must survive the strip."""
+    def test_cleanup_drops_projection_entries_no_declaration_covers(self):
+        """The contract this replaces was legacy support: a survivor's bare
+        `related_papers` list used to be kept id-by-id through a deletion. Now the
+        field is always regenerated from `relations`, so a note with no
+        declarations ends up with an empty projection — which is precisely what
+        validate_relations reports as `unmigrated` BEFORE anything is written."""
         self.make(1, "Old", 2020)
         self.make(2, "Gone", 2023)
         self.make(3, "Other", 2024, related_papers=[1, 2])
 
+        # Reported before anything is written — that is the point of the check.
+        self.assertIn("unmigrated",
+                      {i["code"] for i in relations.validate_relations(mp.get_all_papers())})
+
         mp.cleanup_after_deletion(2, "Gone", self.papers)
 
-        self.assertEqual(self.read(3)["related_papers"], [1])
+        self.assertEqual(self.read(3)["related_papers"], [])
 
 
 class WikilinkStemTest(TempVaultCase):

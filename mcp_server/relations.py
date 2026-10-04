@@ -24,8 +24,6 @@ Pure functions only — no file I/O, so every rule below is unit-testable.
 """
 from typing import Iterable, Optional
 
-RELATION_TYPES = ("method_similar", "problem_related", "complementary", "evolutionary")
-
 
 def coerce_id(value) -> Optional[int]:
     """Frontmatter ``id`` as an int, or None when it is not a usable id.
@@ -165,20 +163,34 @@ def relations_of(paper: dict) -> list[dict]:
     return normalize_relations(paper.get("relations"))[0]
 
 
-def relation_targets(paper: dict) -> list[int]:
-    """Sorted target IDs — the projection that ``related_papers`` must equal."""
-    return sorted({e["target"] for e in relations_of(paper)})
+def index_papers(papers: Iterable[dict]) -> tuple:
+    """``({paper_id: paper}, duplicates)`` — the only id→paper index builder.
+
+    Ids that ``coerce_id`` rejects (missing, ``id: yes``, ``id: 2.0``, ``id:
+    "7.5"``) are skipped rather than folded onto a real paper. This used to be a
+    bare ``int(p["id"])``, which mapped ``id: yes`` onto paper 1 — the exact
+    failure coerce_id exists to block, and it disagreed with the ``_by_id`` copy
+    in tools/verify_graph_arrows.py about which notes even exist.
+
+    ``duplicates`` is ``[(pid, dropped_file, kept_file)]``: two notes sharing an
+    id overwrite each other here, and the dropped one's relations would vanish
+    from the rendered graph without a word, so callers that *present* the index
+    get told about it (see get_paper_by_id, which warns on the same condition).
+    """
+    index, dupes = {}, []
+    for p in papers:
+        pid = coerce_id(p.get("id"))
+        if pid is None:
+            continue
+        if pid in index:
+            dupes.append((pid, index[pid].get("file", "?"), p.get("file", "?")))
+        index[pid] = p
+    return index, dupes
 
 
 def relation_index(papers: Iterable[dict]) -> dict[int, dict]:
-    """``{paper_id: paper}`` with non-integer ids skipped (vault hygiene)."""
-    index = {}
-    for p in papers:
-        try:
-            index[int(p.get("id"))] = p
-        except (TypeError, ValueError):
-            continue
-    return index
+    """``{paper_id: paper}`` — id rules in index_papers."""
+    return index_papers(papers)[0]
 
 
 def _mentions(paper: dict, other: dict) -> bool:
@@ -218,19 +230,22 @@ def validate_relations(papers: Iterable[dict]) -> list[dict]:
             add("bad_entry", ERROR, paper, f"[{short}] {w}")
 
         declared_targets = {e["target"] for e in entries}
-        legacy = paper.get("related_papers") or []
-        legacy_targets = {int(x) for x in legacy if isinstance(x, int)
-                          or (isinstance(x, str) and x.isdigit())}
 
-        # migration hints: a vault that still only has related_papers
-        if legacy_targets and not entries:
-            add("unmigrated", WARN, paper,
-                f"[{short}] 只有 related_papers {sorted(legacy_targets)}，尚未迁移为 "
-                f"relations（无类型/方向语义）——运行 tools/migrate_relations.py")
-        elif declared_targets != legacy_targets:
-            add("legacy_drift", WARN, paper,
-                f"[{short}] related_papers={sorted(legacy_targets)} 与 relations 投影"
-                f"{sorted(declared_targets)} 不一致（related_papers 应由工具自动同步）")
+        # `related_papers` is written by the projection and never read as input,
+        # so an entry here that no declaration covers means one of two kinds of
+        # loss: a hand edit (silently overwritten by the next sync) or a note that
+        # was never migrated (its ids are dropped on its first write). Neither is
+        # a hint, so this is an error and it names the fix. Entries that do not
+        # coerce to an id count as uncovered too — a bare `int()` comparison would
+        # have let `related_papers: ["3"]` and a typo slip through unnoticed.
+        raw_projection = paper.get("related_papers") or []
+        uncovered = [x for x in raw_projection if coerce_id(x) not in declared_targets]
+        if uncovered:
+            add("unmigrated" if not entries else "projection_drift", ERROR, paper,
+                f"[{short}] related_papers 有 relations 不覆盖的条目 {uncovered}"
+                f"（{'该笔记只有旧字段，尚未迁移为 relations' if not entries else '投影字段被手改'}）"
+                f"—— related_papers 由工具按 relations 重写，下次同步会丢弃这些条目；"
+                f"要保留的关系先写成 relations（旧 vault 跑 tools/migrate_relations.py）")
 
         for e in entries:
             target_id = e["target"]
@@ -296,23 +311,6 @@ def validate_relations(papers: Iterable[dict]) -> list[dict]:
     return issues
 
 
-def format_issues(issues: Iterable[dict]) -> str:
-    """Human-readable dump grouped by severity (used by the CLI tools)."""
-    issues = list(issues)
-    if not issues:
-        return "✅ 关系完整性检查通过：条目合法、互指对称、依据齐备。"
-    errors = [i for i in issues if i["severity"] == ERROR]
-    warns = [i for i in issues if i["severity"] != ERROR]
-    lines = []
-    if errors:
-        lines.append(f"❌ 关系错误 {len(errors)} 条：")
-        lines += [f"  - [{i['code']}] {i['message']}" for i in errors]
-    if warns:
-        lines.append(f"⚠️  关系提示 {len(warns)} 条：")
-        lines += [f"  - [{i['code']}] {i['message']}" for i in warns]
-    return "\n".join(lines)
-
-
 def infer_type(paper_a: dict, paper_b: dict) -> str:
     """Category-equality heuristic, kept from the pre-relations implementation
     for the *legacy* path only (migration + un-annotated ``related_papers``).
@@ -363,7 +361,12 @@ def derive_relations(paper: dict, index: dict) -> tuple[list[dict], list[int]]:
 
 
 def project_related_papers(entries: Iterable[dict]) -> list[int]:
-    """``relations`` -> the legacy ``related_papers`` projection."""
+    """``relations`` -> the ``related_papers`` projection.
+
+    The one writer of that field: ``related_papers`` is derived here on every
+    write and read by nothing as input, so Obsidian and Dataview queries keep
+    working while the semantics live only in ``relations``.
+    """
     return sorted({e["target"] for e in entries})
 
 
