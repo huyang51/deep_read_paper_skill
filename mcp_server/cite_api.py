@@ -309,18 +309,24 @@ def cite_verify(query: str = "", author: str = "", year=None,
 
     q = query or (matches[0]["title"] if matches else "")
 
+    # None (not False) when the caller supplied no author/year: a bare
+    # `author_match: false` reads downstream as a *claimed* mismatch, which
+    # is a different fact than "not checked". Every consumer here is either
+    # guarded on `author`/`year` or uses truthiness, so null is safe; only
+    # the sort key needs bool() to stay comparable.
     def _enrich(m):
         m = dict(m, similarity=title_similarity(q, m["title"]))
-        m["author_match"] = bool(author) and any(
-            _norm_title(author) in _norm_title(a) for a in m["authors"])
-        m["year_match"] = bool(year) and m.get("year") in (year, year - 1, year + 1)
+        m["author_match"] = any(
+            _norm_title(author) in _norm_title(a) for a in m["authors"]
+        ) if author else None
+        m["year_match"] = (m.get("year") in (year - 1, year, year + 1)) if year else None
         return m
 
     # Rank by (title similarity, author hit, year hit): a title-lookalike
     # (e.g. the real "Attention is all you need: ... drug discovery" paper that
     # cites-bombs the Transformer one) must not outrank the actual claim.
     scored = sorted((_enrich(m) for m in matches),
-                    key=lambda m: (m["similarity"], m["author_match"], m["year_match"]),
+                    key=lambda m: (m["similarity"], bool(m["author_match"]), bool(m["year_match"])),
                     reverse=True)
     result["matches"] = scored[:5]
     if not scored:

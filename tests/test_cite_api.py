@@ -165,6 +165,23 @@ class CiteVerifyTest(Patched):
         self.assertEqual(r["verdict"], "probable")
         self.assertTrue(any("author" in n for n in r["notes"]))
 
+    def test_unsupplied_checks_report_null_not_false(self):
+        """Regression: with no author/year supplied, every candidate used to
+        carry `author_match: false` — callers read that as a claimed mismatch.
+        Not-checked must be null, and no downgrade note may appear."""
+        self.route(search_payload=[REAL, PARODY])
+        r = cite_api.cite_verify(query="Attention is All You Need")
+        for m in r["matches"]:
+            self.assertIsNone(m["author_match"])
+            self.assertIsNone(m["year_match"])
+        self.assertFalse(any("author" in n.lower() for n in r["notes"]))
+        # supplied checks still yield plain booleans
+        self.route(search_payload=[REAL, PARODY])
+        r = cite_api.cite_verify(query="Attention is All You Need",
+                                 author="Vaswani", year=2017)
+        self.assertIs(r["matches"][0]["author_match"], True)
+        self.assertIs(r["matches"][0]["year_match"], True)
+
     def test_chinese_title_exact(self):
         """Regression: a purely Chinese title used to normalize to "" and
         could never clear the 0.75 title floor — every real citation of a
