@@ -699,7 +699,11 @@ def promote_body_masthead(body_md: str, metadata: dict):
     masthead instead: the h1 becomes the page title (removed from the body),
     the ``| **label** | value |`` rows become meta-grid rows. Only a masthead
     position is promoted — the h1 must precede any ``## `` heading — so a
-    document that merely reuses # later is never hijacked.
+    document that merely reuses # later is never hijacked. When a second h1
+    appears before the table, the *last* such h1 is the masthead and the
+    earlier placeholder heading is dropped, but its surrounding content (the
+    old template's ``# 文献解读报告`` line + glance box) otherwise stays in the
+    body — promoting from the first h1 used to swallow the box and the title.
 
     Returns (body_md, fallback_title_or_None, [(label, value), ...]).
     """
@@ -713,10 +717,23 @@ def promote_body_masthead(body_md: str, metadata: dict):
     lines = body_md[h1.start():].splitlines(keepends=True)
     rows = []
     last_row = None  # index into lines of the final key-value row
+    h1_at = 0        # index into lines of the CURRENT masthead candidate
     for idx in range(1, len(lines)):
         line = lines[idx]
         if re.match(r"^## ", line):
             break
+        if re.match(r"^# (?!#)", line):
+            # A second h1 before any ##: an old-template report carries a
+            # placeholder h1 (`# 文献解读报告`) + glance box ahead of the real
+            # `# 标题` + table. The table belongs to the h1 directly above it,
+            # so restart the candidate there — promoting the first h1 instead
+            # swallowed the glance box and the real title whole. The
+            # placeholder heading line itself is dropped (the promoted title
+            # supersedes it); everything else before the masthead survives.
+            h1_at = idx
+            rows = []
+            last_row = None
+            continue
         row = _KV_ROW.match(line.strip())
         if row:
             rows.append((row.group(1), row.group(2)))
@@ -724,8 +741,8 @@ def promote_body_masthead(body_md: str, metadata: dict):
     if not rows:
         return body_md, None, []  # an h1 alone is content, not a masthead
 
-    title = h1.group(1).strip()
-    remainder = "".join(lines[last_row + 1:])
+    title = lines[h1_at].strip()[2:].strip()
+    remainder = "".join(lines[1:h1_at]) + "".join(lines[last_row + 1:])
     return body_md[:h1.start()] + remainder, title, rows
 
 

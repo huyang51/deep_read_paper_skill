@@ -551,5 +551,77 @@ class TemplateMastheadTest(unittest.TestCase):
         self.assertIn("<h1>一篇普通文档</h1>", h)
 
 
+class OldTemplateMastheadTest(unittest.TestCase):
+    """Regression on the two existing vault reports: the old template began
+    with a placeholder h1 (`# 文献解读报告`) + the 30-second glance box, and
+    only then the real `# title` + kv table. promote_body_masthead took the
+    FIRST h1 as the masthead and deleted everything from it through the last
+    table row — the glance box and the real title vanished from the page,
+    and <title> read as the placeholder. The table must promote from the
+    h1 directly above it; content before that h1 stays in the body."""
+
+    OLD_TEMPLATE_LIKE = """# 文献解读报告
+
+```
+╔══════════════════════════════╗
+║  📌 30秒速览                  ║
+║  问题: 单模态查询瓶颈          ║
+╚══════════════════════════════╝
+```
+
+---
+
+# Recurrence-Enhanced Vision-Language Retrieval
+
+<div align="center">
+
+| | |
+|---|---|
+| **原文** | Recurrence-Enhanced Vision-Language Retrieval |
+| **作者** | Davide Caffagni 等 |
+| **发表** | CVPR, 2025 |
+
+</div>
+
+---
+
+## 1. 问题背景
+
+正文开始。
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.md = Path(self.tmp.name) / "old_report.md"
+        self.md.write_text(self.OLD_TEMPLATE_LIKE, encoding="utf-8")
+        rr.render_report(self.md)
+        self.html = self.md.with_suffix(".html").read_text(encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_real_title_promoted_not_placeholder(self):
+        self.assertIn("<title>Recurrence-Enhanced Vision-Language Retrieval</title>",
+                      self.html)
+
+    def test_glance_box_survives(self):
+        # rendered as the styled glance card; pangu spaces "30秒" -> "30 秒"
+        self.assertIn('class="glance"', self.html)
+        self.assertIn("单模态查询瓶颈", self.html)
+
+    def test_placeholder_heading_superseded_not_promoted(self):
+        """The placeholder h1 line itself is dropped — the promoted real title
+        supersedes it — while the glance box that followed it survives."""
+        self.assertNotIn("<title>文献解读报告</title>", self.html)
+        self.assertNotIn("<h1>文献解读报告</h1>", self.html)
+        self.assertEqual(self.html.count("<h1"), 1)  # only the page header
+
+    def test_kv_table_promoted_and_body_sections_survive(self):
+        self.assertIn("meta-grid", self.html)
+        self.assertIn("Davide Caffagni 等", self.html)
+        self.assertIn("正文开始。", self.html)
+        self.assertNotIn('<div align="center">', self.html)  # masthead gone
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
