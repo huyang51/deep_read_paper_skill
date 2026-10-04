@@ -188,6 +188,10 @@ DATA.nodes.forEach(n => byId[n.id] = n);
 
 // ---- palette / legend state -------------------------------------------
 const TYPES = [...new Set(DATA.edges.flatMap(e => e.types))];
+// An edge with NO declared relation type would ask for url(#ar-undefined) —
+// SVG silently draws no arrowhead, so the direction vanished without a trace.
+const NO_TYPE = "__untyped__";
+const markerKey = t => (t === undefined || t === null || t === "") ? NO_TYPE : t;
 const typeColor = t => __TYPE_COLORS__[t] || '__FALLBACK__';
 const typeName = t => __TYPE_NAMES__[t] || t;
 const off = new Set();
@@ -212,7 +216,7 @@ const root = document.createElementNS(NS, 'g');   // pan/zoom transform target
 svg.appendChild(root);
 document.getElementById('stage').appendChild(svg);
 
-TYPES.forEach(t => {  // one arrow marker per type color
+[...TYPES, NO_TYPE].forEach(t => {  // one arrow marker per type color (+ untyped)
   const m = document.createElementNS(NS, 'marker');
   m.setAttribute('id', 'ar-' + t);
   m.setAttribute('viewBox', '0 0 10 10');
@@ -234,12 +238,13 @@ DATA.edges.forEach(e => {
   e.el = document.createElementNS(NS, 'line');
   e.el.setAttribute('class', 'edge' + (e.peer ? ' peer' : ''));
   const t = e.types[0];
+  const mk = markerKey(t);
   e.el.setAttribute('stroke', typeColor(t));
   if (e.peer) {           // parallel work: arrows on both ends, no order
-    e.el.setAttribute('marker-start', 'url(#ar-' + t + ')');
-    e.el.setAttribute('marker-end', 'url(#ar-' + t + ')');
+    e.el.setAttribute('marker-start', 'url(#ar-' + mk + ')');
+    e.el.setAttribute('marker-end', 'url(#ar-' + mk + ')');
   } else {                // later → earlier, one arrowhead
-    e.el.setAttribute('marker-end', 'url(#ar-' + t + ')');
+    e.el.setAttribute('marker-end', 'url(#ar-' + mk + ')');
   }
   edgeG.appendChild(e.el);
 });
@@ -415,13 +420,19 @@ def render_html(nodes: list, edges: list) -> str:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="导出独立交互式论文关系图谱页")
-    ap.add_argument("--vault", default="knowledge-base",
-                    help="vault 根目录（默认 ./knowledge-base）")
+    ap.add_argument("--vault", default=None,
+                    help="vault 根目录（默认取 settings.json / PAPER_KB_VAULT_DIR "
+                         "解析出的 vault_dir——与其余工具同一口径，不再是相对 CWD 的 ./knowledge-base）")
     ap.add_argument("-o", "--output", default="output/graph.html",
                     help="输出 HTML 路径（默认 output/graph.html）")
     args = ap.parse_args(argv)
 
-    vault = Path(args.vault)
+    # Sibling tools (verify_graph_arrows, migrate_relations, index_paper) all
+    # read config.PAPERS_DIR; a hardcoded "knowledge-base" relative to CWD
+    # meant that on a configured machine, exporting the graph the README shows
+    # exited 1 with "vault 为空或不存在" while every other tool worked.
+    from mcp_server import config
+    vault = Path(args.vault) if args.vault else Path(config.PAPERS_DIR).parent
     papers = get_all_papers(vault / "papers")
     if not papers:
         print(f"vault 为空或不存在：{vault}", file=sys.stderr)

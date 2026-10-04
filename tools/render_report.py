@@ -1352,8 +1352,16 @@ def render_report(md_path, out_path=None, offline=False, katex=None,
 
     dist = local_katex_dir(katex_dir) if mode == "embed" else None
     katex_head, katex_scripts, note = _katex_assets(mode, dist, needs_chem)
-    kmode = {"off": "未加载（离线）", "embed": KATEX_VERSION + "（内嵌）"}.get(
-        mode, KATEX_VERSION + "（CDN 多镜像）")
+    # The footer must report what the PAGE ACTUALLY IS: on the embed→CDN
+    # fallback _katex_assets warns on stderr but keeps going — while kmode
+    # still promised 「KaTeX …（内嵌）」, i.e. the artifact claimed to be
+    # self-contained while its formulas in fact need network.
+    if mode == "embed" and dist is None:
+        kmode = KATEX_VERSION + "（CDN 多镜像——本地 KaTeX 缺失，页面并非自包含）"
+    else:
+        kmode = {"off": "未加载（离线）",
+                 "embed": KATEX_VERSION + "（内嵌）"}.get(
+            mode, KATEX_VERSION + "（CDN 多镜像）")
 
     out_path = Path(out_path) if out_path else md_path.with_suffix(".html")
     page = _TEMPLATE.format(

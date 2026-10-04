@@ -623,5 +623,25 @@ class OldTemplateMastheadTest(unittest.TestCase):
         self.assertNotIn('<div align="center">', self.html)  # masthead gone
 
 
+class EmbedFallbackHonestyTest(unittest.TestCase):
+    """The footer must state what the page ACTUALLY loads. When --embed-katex
+    found no local dist, _katex_assets warned on stderr and degraded to CDN —
+    while the page footer still promised 「（内嵌）」, i.e. the artifact
+    claimed self-containment exactly when its formulas needed network."""
+
+    def test_missing_local_dist_is_reported_as_cdn_in_the_footer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            md = Path(tmp) / "r.md"
+            md.write_text("---\ntitle: T\nyear: 2024\n---\n\n"
+                          "公式 $x^2$ 与\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+                          encoding="utf-8")
+            out = Path(tmp) / "r.html"
+            rr.render_report(md, out_path=out, katex="embed",
+                             katex_dir=str(Path(tmp) / "empty"))
+            html = out.read_text(encoding="utf-8")
+        self.assertIn("并非自包含", html)
+        self.assertNotIn("（内嵌）", html)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

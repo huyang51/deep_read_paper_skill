@@ -7,6 +7,7 @@ either half makes the exported page lie quietly.
 """
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -28,6 +29,40 @@ def _paper(pid, short_name="P", body="", relations=None, year=2020, related=None
             "year": year, "venue": "V", "file": f"{short_name}.md",
             "body": body, "related_papers": related or [],
             "relations": relations or []}
+
+
+class UntypedEdgeMarkerTest(unittest.TestCase):
+    """A directed edge with an EMPTY relation type used to resolve
+    url(#ar-undefined) — SVG draws no arrowhead, silently, so the declared
+    direction vanished from the page."""
+
+    def test_js_wires_a_real_marker_for_the_untyped_case(self):
+        self.assertIn("markerKey", eg._HTML)
+        self.assertIn("__untyped__", eg._HTML)
+
+
+class VaultDefaultTest(unittest.TestCase):
+    """--vault used to default to ./knowledge-base relative to CWD and ignored
+    settings.json / PAPER_KB_VAULT_DIR entirely — on a configured machine the
+    README's own command exited 1 with 「vault 为空或不存在」 while every
+    sibling tool (verify_graph_arrows, migrate_relations, index_paper) worked."""
+
+    def test_env_vault_is_used_when_flag_is_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "kb"
+            (vault / "papers").mkdir(parents=True)
+            (vault / "papers" / "A.md").write_text(
+                "---\nid: 1\ntitle: Alpha\nshort_name: Alpha\nyear: 2020\n"
+                "---\n\n正文。\n", encoding="utf-8")
+            out = vault / "graph.html"
+            env = dict(os.environ, PAPER_KB_VAULT_DIR=str(vault))
+            r = subprocess.run([sys.executable, str(REPO / "tools" / "export_graph.py"),
+                                "-o", str(out)],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", env=env,
+                               cwd=str(Path(tmp)) )  # NOT under a knowledge-base
+            self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+            self.assertTrue(out.is_file())
 
 
 class BuildGraphDataTest(unittest.TestCase):
