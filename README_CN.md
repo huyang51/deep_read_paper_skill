@@ -190,6 +190,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > - 忘记 `conda activate paper-kb` → `pip install` 装到了别的 Python，或跑工具时命中系统 Python，报 `ModuleNotFoundError`
 > - `settings.json` 中 `python_cmd` 指向系统 Python 而非 skill 环境 → MCP server 与 hooks 启动即崩（`deploy.py` 的自检会 [WARN]）
 > - 没设 `HF_ENDPOINT` → 首次下载模型时卡住，MCP server 启动时像"死"了一样。模型一旦缓存到本地就不会再走这一步：server 会自己切到离线加载，跳过 HuggingFace 联网检查
+> - `verify_refs.py` 大批量跑到第 ~50 行开始回 `429` → OpenAlex 免费额度是**每 IP 一次性 credit**（约百次查询；实测 2026-10-04），S2 无 key 池常同时枯竭。工具会自动**熔断**（连续 3 行 429 后停止发起查询，剩余行如实标 🌐 并带上 Retry-After）。别整批重跑：窗口重置后执行 `python tools/verify_refs.py --refs refs.txt --out ledger.json --md table.md --resume`——已判定行零配额沿用，只补跑失败行；报告侧这些行维持【外部核验不可用】，**不得写成"不存在"**
 
 ### 配置 (`settings.json`)
 
@@ -210,7 +211,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `project_dir` | ✅ | Claude Code 项目根目录，`paper-kb-deploy` 自动将配置部署至此。 |
 | `python_cmd` | ✅ | **conda 环境中 python 的绝对路径**（如 Windows: `D:/Anaconda3/envs/paper-kb/python.exe`；Linux/Mac: `/opt/anaconda3/envs/paper-kb/bin/python`）。在激活的 conda 环境中执行 `which python` / `where python` 即可获取。 |
 | `embedding_model` | 否 | **默认: `paraphrase-multilingual-MiniLM-L12-v2`**（中英文双语，走 SentenceTransformer → **需要 torch**，首次使用要下载模型）。若环境里没有 torch，改用 `all-MiniLM-L6-v2`——它走 ChromaDB 自带的 ONNX 嵌入，**不需要 torch 也不用另外下载**，代价是中文语义检索变弱。**换模型等于换向量空间**：已有 `.chromadb` 里的向量与新模型不可比，需删库重建索引。`deploy.py` 会用 `python_cmd` 做一次启动自检，缺包会直接告警。 |
-| `openalex_mailto` | 否 | OpenAlex 礼貌池邮箱（提升 `cite_verify`/`paper_citations` 限流额度），可选但建议填 |
+| `openalex_mailto` | 否 | OpenAlex 礼貌池邮箱，可选但建议填——注意它买到的只是**优先排队**，不补齐免费档**每 IP 一次性 credit**（约百次查询，2026-10-04 实测）。大型 §6 存在性核验请分日跑：`verify_refs.py --resume` 能零浪费续跑中断批次 |
 | `trigger_keywords_cn` | 否 | 自动触发论文相关搜索提示的中文关键词（UserPromptSubmit hook）。 |
 | `trigger_keywords_en` | 否 | 自动触发论文相关搜索提示的英文关键词（UserPromptSubmit hook）。 |
 

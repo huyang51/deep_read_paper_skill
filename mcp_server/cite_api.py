@@ -43,7 +43,20 @@ def _http_get_json(url: str, timeout: float = TIMEOUT_S):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code} for {url}"
+        # 429 carries the ONLY actionable number for a caller: Retry-After.
+        # 2026-10-04 live case: OpenAlex switched free tier to one-time IP
+        # credits (X-RateLimit-Onetime-Remaining) — a ~70-row existence batch
+        # exhausted them mid-run and answered 429 with Retry-After≈8.7h, while
+        # the error text "HTTP 429" alone read as "transient, retry soon".
+        # Surfacing the seconds lets verify_refs trip a quota circuit-breaker instead of
+        # burning its way through the remaining rows.
+        extra = ""
+        if e.code == 429:
+            ra = (e.headers.get("Retry-After") if e.headers else None) or ""
+            ra = str(ra).strip()
+            if ra.isdigit():
+                extra = f" (Retry-After {ra}s)"
+        return None, f"HTTP {e.code}{extra} for {url}"
     except Exception as e:  # URLError, timeout, JSON decode…
         return None, f"{type(e).__name__}: {e} for {url}"
     if not isinstance(data, dict):

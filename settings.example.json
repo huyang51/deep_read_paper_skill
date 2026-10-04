@@ -4,6 +4,7 @@
   "project_dir": "D:/my-papers",
   "python_cmd": "D:/Anaconda3/envs/paper-kb/python.exe",
   "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+  "_readme_openalex_mailto": "填你的邮箱进 OpenAlex 礼貌池（优先排队）。注意：它不补齐免费档的每-IP 一次性 credit（约百次查询）——大型 verify_refs 批次会撞墙，工具将熔断，窗口重置后用 --resume 补跑失败行即可",
   "openalex_mailto": "",
   "trigger_keywords_cn": ["论文", "文献", "paper", "paper reading", "深度阅读", "论文解读", "论文分析", "读论文"],
   "trigger_keywords_en": ["paper", "literature", "deep read", "paper reading", "paper analysis"]

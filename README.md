@@ -194,6 +194,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 > - Forgot `conda activate paper-kb` → `pip install` lands in another Python, or tool commands hit system Python and fail with `ModuleNotFoundError`
 > - `python_cmd` points to system Python instead of the skill's env → MCP server and hooks die at startup (deploy's preflight prints `[WARN]`)
 > - No `HF_ENDPOINT` set → the first model download stalls and a starting MCP server looks dead. Once the model is cached this step is gone for good: the server switches itself to offline loading and skips the HuggingFace hub check
+> - A large `verify_refs.py` batch answers `429` from row ~50 onward → OpenAlex's free one-time IP credits are spent (S2's keyless pool usually thins out at the same moment). The tool now trips a **circuit breaker** (stops querying after 3 consecutive 429s, keeps the rows visible as 🌐 with Retry-After). Do not re-run the whole batch: `python tools/verify_refs.py --refs refs.txt --out ledger.json --md table.md --resume` after the window resets — already-judged rows are carried over without spending quota; report-side, those rows stay 【外部核验不可用】, never "nonexistent"
 
 ### Configuration (`settings.json`)
 
@@ -214,7 +215,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | `project_dir` | ✅ | Your Claude Code project root — `paper-kb-deploy` auto-deploys config here |
 | `python_cmd` | ✅ | **Absolute path to the conda env's python** (e.g. `D:/Anaconda3/envs/paper-kb/python.exe` on Windows, `/opt/anaconda3/envs/paper-kb/bin/python` on Linux/Mac). Run `which python` inside the activated env to confirm. |
 | `embedding_model` | No | **Default: `paraphrase-multilingual-MiniLM-L12-v2`** (Chinese + English; goes through SentenceTransformer → **needs torch**, and the model is downloaded on first use). Without torch, use `all-MiniLM-L6-v2` — ChromaDB's built-in ONNX embedder, no torch and no download, at the cost of weaker Chinese semantic search. **Changing the model changes the vector space**: vectors already in `.chromadb` are not comparable to the new model's, so the index must be rebuilt. `deploy.py` probes `python_cmd` and warns if the interpreter cannot start the server. |
-| `openalex_mailto` | No | Email for OpenAlex's polite pool (improves `cite_verify`/`paper_citations` rate limits). Optional but recommended |
+| `openalex_mailto` | No | Email for OpenAlex's polite pool. Optional but recommended — but know what it does and does not buy you: it prioritizes requests, it does **not** refill the free tier's *one-time per-IP credit budget* (~a hundred lookups, live-observed 2026-10-04). Big §6 existence batches are meant to be split across days; `verify_refs.py --resume` finishes an interrupted pass without requering judged rows |
 | `trigger_keywords_cn` | No | Chinese keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
 | `trigger_keywords_en` | No | English keywords that auto-trigger paper-related search hints (UserPromptSubmit hook) |
 

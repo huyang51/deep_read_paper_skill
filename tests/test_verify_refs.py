@@ -305,5 +305,117 @@ class GateLedgerConsistencyTest(unittest.TestCase):
         self.assertIn("弱匹配", vr._record_cell(entry))
 
 
+class QuotaCircuitBreakerTest(unittest.TestCase):
+    """2026-10-04 live case: OpenAlex one-time IP credits exhausted mid-batch
+    (HTTP 429 + Retry-After≈8.7h, mailto pool useless). The batch must halt
+    after QUOTA_HALT_AFTER consecutive 429s instead of hammering the door,
+    and --resume must finish it in a fresh window without requering rows
+    already judged."""
+
+    R429 = None  # built in setUp: _result is defined at module level
+
+    def setUp(self):
+        self._orig = vr.cite_api.cite_verify
+        QuotaCircuitBreakerTest.R429 = _result(
+            "network_error", match=False,
+            notes=["HTTP 429 (Retry-After 31438s) for https://api.openalex.org/…"])
+
+    def tearDown(self):
+        vr.cite_api.cite_verify = self._orig
+
+    @staticmethod
+    def _refs(n=5):
+        return [{"title": f"T{i}", "author": "", "year": None, "doi": "",
+                 "arxiv_id": "", "url": ""} for i in range(1, n + 1)]
+
+    def test_breaker_halts_and_labels_the_rest(self):
+        calls = []
+        def fake(query="", **kw):
+            calls.append(query)
+            return self.R429
+        ledger = vr.build_ledger(self._refs(), delay=0, verify=fake)
+        self.assertEqual(len(ledger["entries"]), 5)          # all rows visible
+        self.assertEqual(len(calls), vr.QUOTA_HALT_AFTER)    # only 3 queried
+        self.assertEqual(ledger["quota_halt"]["retry_after_seconds"], 31438)
+        halters = [e for e in ledger["entries"] if e["verdict"] == "quota_halt"]
+        self.assertEqual(len(halters), 2)
+        for e in halters:
+            self.assertEqual(e["gate"], "network")           # §6 legend still holds
+            self.assertIn("配额熔断", e["note"])
+            self.assertIn("不得写成“不存在”", e["note"].replace("**", ""))
+
+    def test_single_transient_429_does_not_halt(self):
+        seq = iter([_result("exact"), self.R429, _result("exact"),
+                    self.R429, _result("exact")])
+        ledger = vr.build_ledger(self._refs(), delay=0, verify=lambda **kw: next(seq))
+        self.assertIsNone(ledger["quota_halt"])
+        self.assertEqual([e["gate"] for e in ledger["entries"]],
+                         ["exists_ok", "network", "exists_ok", "network", "exists_ok"])
+
+    def test_resume_carries_judged_rows_and_retries_failures(self):
+        prev = vr.build_ledger(
+            self._refs(3), delay=0,
+            verify=lambda query="", **kw: self.R429 if query == "T2"
+            else _result("exact"))
+        # (3 rows, no halt: single 429 is transient)
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "ledger.json"
+            out.write_text(json.dumps(prev), encoding="utf-8")
+            carried = vr.load_previous(out)
+            calls = []
+            def fake(query="", **kw):
+                calls.append(query)
+                return _result("exact")
+            merged = vr.build_ledger(self._refs(3), delay=0, verify=fake,
+                                     previous=carried)
+        self.assertEqual(merged["carried"], 2)                # T1/T3 verdicts kept
+        self.assertEqual(calls, ["T2"])                       # only the failure re-queried
+        self.assertEqual(merged["counts"]["exists_ok"], 3)
+        self.assertEqual([e["title"] for e in merged["entries"]], ["T1", "T2", "T3"])
+
+    def test_resume_via_cli(self):
+        prev = vr.build_ledger(
+            [{"title": "Alpha", "author": "A", "year": 2017, "doi": "",
+              "arxiv_id": "", "url": ""}],
+            delay=0, verify=lambda **kw: self.R429)
+        vr.cite_api.cite_verify = lambda **kw: _result("exact")
+        with tempfile.TemporaryDirectory() as d:
+            refs = Path(d) / "refs.txt"
+            refs.write_text("Alpha | A | 2017\n", encoding="utf-8")
+            out = Path(d) / "ledger.json"
+            out.write_text(json.dumps(prev), encoding="utf-8")
+            code = vr.main(["--refs", str(refs), "--out", str(out),
+                            "--delay", "0", "--resume"])
+            ledger = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(code, 0)
+        self.assertEqual(ledger["counts"]["exists_ok"], 1)
+        # the old row was network → NOT carried, it was retried and flipped
+        self.assertEqual(ledger["carried"], 0)
+
+
+class CiteApiRetryAfterTest(unittest.TestCase):
+    """The breaker depends on cite_api SURFACING the 429 + Retry-After in the
+    error string — pin that contract here (offline: urlopen is replaced)."""
+
+    def test_429_error_carries_retry_after(self):
+        import urllib.error
+        import urllib.request
+        import io as _io
+        from email.message import Message
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from mcp_server import cite_api
+        hdrs = Message()
+        hdrs["Retry-After"] = "31438"
+        orig = urllib.request.urlopen
+        def boom(*a, **k):
+            raise urllib.error.HTTPError("https://x", 429, "Too Many", hdrs,
+                                         _io.BytesIO(b""))
+        urllib.request.urlopen = boom
+        self.addCleanup(setattr, urllib.request, "urlopen", orig)
+        data, err = cite_api._http_get_json("https://x")
+        self.assertIsNone(data)
+        self.assertIn("HTTP 429 (Retry-After 31438s)", err)
+
+
 if __name__ == "__main__":
     unittest.main()

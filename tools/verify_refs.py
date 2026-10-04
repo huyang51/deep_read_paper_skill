@@ -41,8 +41,19 @@ Gate labels:
   defer        an identifier was supplied but the lookup was incomplete
                (OpenAlex coverage gap / S2 rate-limit) → retry these rows
   unresolved   no confident record: "not indexed", NOT "does not exist"
-  network      the lookup could not complete (transient/link failure)
+  network      the lookup could not complete (transient/link failure), or the
+               row was never queried because of the quota circuit-breaker
   empty        the row had no title (skipped)
+
+Quota reality (live 2026-10-04): OpenAlex free tier is one-time credits per IP
+(~a hundred lookups) + S2 keyless shares a global pool — a big existence batch
+CAN exhaust them mid-run. The tool then trips a circuit-breaker after
+QUOTA_HALT_AFTER consecutive 429s (remaining rows get network rows marked
+"配额熔断", ledger carries quota_halt with Retry-After when the API provides
+one) instead of hammering the door. Finish later with:
+  python tools/verify_refs.py --refs refs.txt --out ledger.json --resume
+which carries every already-judged row over without spending quota and
+re-verifies only network/defer/missing rows.
 
 Outputs:
   --out  ledger JSON (default: cite_ledger.json next to the refs file)
@@ -52,10 +63,11 @@ Usage:
   python tools/verify_refs.py --refs refs.txt --md refs_table.md
 
 Exit codes: 0 = every row resolved on this pass | 2 = ran, but ≥1 row is
-network/defer (the ledger is partial — retry those rows) | 1 = bad args/input.
+network/defer (the ledger is partial — --resume in a fresh window) | 1 = bad args/input.
 """
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -218,20 +230,82 @@ def gate_note(gate: str, result: dict, ref: dict) -> str:
     if gate == "unresolved":
         return "OpenAlex/S2 未收录——**不等于不存在**（workshop/学位论文/非英文venue/新预印本覆盖有限）；换标识符重试或按【未核验】标注"
     if gate == "network":
-        return "网络/接口失败——换时段重试；报告按【外部核验不可用】如实标注"
+        return ("网络/接口失败（连续 429 时批量会自动熔断）——窗口重置后对同一 "
+                "--out 加 --resume 只补跑失败行；报告按【外部核验不可用】如实标注")
     if gate == "empty":
         return "该行无标题（或仅有无法检索的 URL），已跳过核验"
     return ""
 
 
-def build_ledger(refs, delay: float = 0.6, max_n: int = 60, verify=None):
+# Consecutive 429 rows that trip the circuit-breaker. 2026-10-04 live case:
+# OpenAlex answers every lookup with 429 once the one-time IP credits are
+# spent (Retry-After hours ahead); without a stop the batch hammers all
+# remaining rows into 🌐 and reads like a broken network rather than a spent
+# quota. Three consecutive gives flaky-but-alive providers (intermittent S2
+# 429s recover within one retry) a fair chance first.
+QUOTA_HALT_AFTER = 3
+
+_RETRY_AFTER_RE = re.compile(r"Retry-After (\d+)")
+
+
+def _is_429(result: dict) -> bool:
+    return any("429" in n for n in (result.get("notes") or []))
+
+
+def _retry_after(result: dict):
+    for n in result.get("notes") or []:
+        m = _RETRY_AFTER_RE.search(n)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _row_key(ref: dict):
+    """Identity of a refs row inside a previous ledger, for --resume.
+    The title is what parse_refs puts into entry["title"] when no queryable
+    field exists; claimed author/year disambiguate duplicate titles."""
+    return (ref.get("title", ""), ref.get("author", ""),
+            str(ref.get("year") or ""))
+
+
+def load_previous(out_path):
+    """--resume: read the earlier ledger, return {row_key: entry} for rows
+    whose verdict stands (anything but network/defer — those two say "we
+    never got an answer", exactly what resume must retry)."""
+    try:
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    prev = {}
+    for e in data.get("entries", []):
+        if e.get("gate") in ("network", "defer"):
+            continue
+        c = e.get("claimed") or {}
+        prev.setdefault((e.get("title", ""), c.get("author", ""),
+                         str(c.get("year") or "")), e)
+    return prev
+
+
+def build_ledger(refs, delay: float = 0.6, max_n: int = 60, verify=None,
+                 previous=None):
     verify = verify or cite_api.cite_verify
-    entries, truncated = [], 0
+    previous = previous or {}
+    entries, truncated, carried = [], 0, 0
+    quota_halt = None
+    streak = 0
     for ref in refs:
-        if len(entries) >= max_n:
+        key = _row_key(ref)
+        if key in previous:                      # --resume: verdict stands
+            entries.append(previous[key])
+            carried += 1
+            continue
+        if len(entries) - carried >= max_n:
             truncated += 1
             continue
         title = ref.get("title", "")
+        if quota_halt is not None:               # breaker tripped: don't query
+            entries.append(_quota_entry(ref, quota_halt))
+            continue
         if not (title or ref.get("doi") or ref.get("arxiv_id")):  # url-only row -> skipped, but visible in the ledger
             result = {"verdict": "not_found", "matches": [], "notes": ["empty query"]}
             gate = "empty"
@@ -271,7 +345,17 @@ def build_ledger(refs, delay: float = 0.6, max_n: int = 60, verify=None):
             "note": gate_note(gate, result, ref),
             "api_notes": result.get("notes", []),
         })
-        if delay and len(entries) < len(refs):
+        # circuit-breaker bookkeeping: ONLY consecutive 429s count — one
+        # transient S2 429 inside an otherwise healthy run must not halt a
+        # 70-row batch.
+        if gate == "network" and _is_429(result):
+            streak += 1
+            if streak >= QUOTA_HALT_AFTER and quota_halt is None:
+                quota_halt = {"halted_at_entry": len(entries),
+                              "retry_after_seconds": _retry_after(result)}
+        else:
+            streak = 0
+        if delay and quota_halt is None and len(entries) < len(refs):
             time.sleep(delay)
     counts = {g: sum(1 for e in entries if e["gate"] == g) for g in GATES}
     return {
@@ -279,7 +363,31 @@ def build_ledger(refs, delay: float = 0.6, max_n: int = 60, verify=None):
         "provider": "OpenAlex (primary) + Semantic Scholar (fallback)",
         "counts": counts,
         "truncated": truncated,
+        "carried": carried,
+        "quota_halt": quota_halt,
         "entries": entries,
+    }
+
+
+def _quota_entry(ref, quota_halt):
+    """A row the batch never queried because the providers proved they were
+    spent. It is NOT a network flake — the note says so, and --resume is the
+    documented way to finish the pass in a fresh quota window."""
+    secs = quota_halt.get("retry_after_seconds")
+    when = f"（上游声明约 {secs}s 后重置）" if secs else "（上游未声明重置时间）"
+    return {
+        "title": ref.get("title") or ref.get("doi") or ref.get("arxiv_id")
+                 or ref.get("url") or "(无标题)",
+        "claimed": {"author": ref.get("author", ""), "year": ref.get("year"),
+                    "doi": ref.get("doi", ""), "arxiv_id": ref.get("arxiv_id", ""),
+                    "url": ref.get("url", "")},
+        "gate": "network",
+        "verdict": "quota_halt",
+        "match": None,
+        "note": f"配额熔断：连续 {QUOTA_HALT_AFTER} 行 HTTP 429，此后未再发起查询"
+                f"{when}。窗口重置后对同一 --out 加 --resume 补跑；"
+                "报告侧按【外部核验不可用】如实标注，**不得写成“不存在”或“核验失败”**",
+        "api_notes": ["quota-halt"],
     }
 
 
@@ -363,6 +471,15 @@ def print_summary(ledger: dict, out_path: Path, md_path):
     if c.get("unresolved") or c.get("defer"):
         print("  ⚠️  “未收录/待重试”只表示外部库没覆盖或限流，**不得写成“不存在”**；"
               "按 mcp_server 的 DEFER 语义重试或降级标注。")
+    if ledger.get("quota_halt"):
+        q = ledger["quota_halt"]
+        when = (f"上游声明约 {q['retry_after_seconds']}s 后重置"
+                if q.get("retry_after_seconds") else "重置时间未知")
+        print(f"  🛑 配额熔断于第 {q['halted_at_entry']} 行（{when}）："
+              "OpenAlex 免费额度为每 IP 一次性 credit（约百次查询），大批量请分日跑；"
+              "窗口重置后 `--resume` 只补跑失败行，已判定行原样保留。")
+    if ledger.get("carried"):
+        print(f"  ↩ --resume：{ledger['carried']} 条已有判定直接沿用，未消耗配额。")
     print(f"  ledger → {out_path}")
     if md_path:
         print(f"  md     → {md_path}")
@@ -383,6 +500,12 @@ def main(argv=None):
                     help="seconds between lookups (default 0.6; be polite to S2)")
     ap.add_argument("--max", type=int, default=60,
                     help="cap on rows actually verified (default 60)")
+    ap.add_argument("--resume", action="store_true",
+                    help="merge with the existing --out ledger: rows already "
+                         "judged (everything but network/defer) are carried "
+                         "over without spending API quota; only failed/missing "
+                         "rows are (re)verified — the way to finish a pass after "
+                         "a quota-halt")
     args = ap.parse_args(argv)
 
     refs_path = Path(args.refs)
@@ -398,8 +521,14 @@ def main(argv=None):
         print(f"error: no references parsed from {refs_path}")
         return 1
 
-    ledger = build_ledger(refs, delay=args.delay, max_n=args.max)
     out_path = Path(args.out) if args.out else refs_path.with_name("cite_ledger.json")
+    previous = {}
+    if args.resume:
+        if not out_path.is_file():
+            print(f"note: --resume 但 {out_path} 不存在——本次等同全量跑批")
+        previous = load_previous(out_path)
+    ledger = build_ledger(refs, delay=args.delay, max_n=args.max,
+                          previous=previous)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2),
                         encoding="utf-8")

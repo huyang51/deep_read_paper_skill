@@ -550,7 +550,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 维度细则（Phase 2 单一来源）：`references/dimensions.md`（11 维提问清单/输出格式 + 类型路由调整表 + 🌐/📊 两道硬检查）
 - 记忆条目模板：`references/memory_entry_template.md`
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3；单元测试：`tests/test_extract_figures.py`）
-- 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`，离线测试 `tests/test_cite_api.py`；使用规则见 `references/dimensions.md`"🌐 外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见同节第 4 条；测试 `tests/test_verify_refs.py`）
+- 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`，离线测试 `tests/test_cite_api.py`；使用规则见 `references/dimensions.md`"🌐 外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见同节第 4 条；配额熔断 + `--resume` 补跑见"配额纪律"；测试 `tests/test_verify_refs.py`）
 - HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → 同名 .html，KaTeX/目录/嵌图；测试 `tests/test_render_report.py`；用法见 Phase 3.6）
 - 跨论文关系：结构化 `relations` frontmatter（唯一事实源，规则见 4.5；实现 `mcp_server/relations.py`）；体检 `tools/verify_graph_arrows.py`、旧 vault 迁移 `tools/migrate_relations.py`（离线测试 `tests/test_relations.py`）
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）
