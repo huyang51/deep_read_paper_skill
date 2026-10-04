@@ -36,6 +36,12 @@ $$
 
 > 引用块中的 $E=mc^2$ 内联数学。
 
+> 💡 核心洞察：缩放因子让训练稳定。
+
+> ⚠️ 注意：本节数字未附统计检验。
+
+> **💡 核心洞察**：模板的加粗形态（emoji 在 `**…**` 里）是真实报告的写法，也必须成 callout。
+
 | 方法 | R@5 | 说明 |
 |------|-----|------|
 | Baseline | 44.2 | 对比 |
@@ -188,6 +194,22 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(
             rr.emoji_callouts("<blockquote><p>普通引用</p>"),
             "<blockquote><p>普通引用</p>")
+
+    def test_emoji_callouts_through_real_pipeline(self):
+        """Regression (2026-10-04 audit): the Markdown library emits
+        "<blockquote>\\n<p>💡" — the regex once lacked the \\s* and only the
+        hand-joined strings above matched, so every real report's 💡/⚠️
+        callouts silently rendered as plain quotes."""
+        h = self._h()
+        self.assertIn('<blockquote class="callout"><p>💡', h)
+        self.assertIn('<blockquote class="callout warn"><p>⚠️', h)
+        # canonical template form: emoji inside the opening <strong>
+        self.assertIn('<blockquote class="callout"><p><strong>💡', h)
+        # the three adjacent `>` blocks merged into one blockquote in the
+        # source; each emoji callout must be cut out and classed, while the
+        # plain quote that headed the merged block stays unclassed
+        self.assertIn('<blockquote>\n<p>引用块中的', h)
+        self.assertNotIn('class="callout">\n<p>引用块中的', h)
 
     def test_chrome_fixes_present(self):
         """The small-chrome batch: h3 secmark (aria-hidden), mobile drawer

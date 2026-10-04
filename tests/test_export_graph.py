@@ -76,7 +76,7 @@ class BuildGraphDataTest(unittest.TestCase):
         self.assertEqual([n["id"] for n in nodes], [1, 2])
         self.assertEqual(len(edges), 1)
         e = edges[0]
-        self.assertEqual((e["source"], e["target"]), (2, 1))  # later → earlier
+        self.assertEqual((e["source"], e["target"]), (1, 2))  # earlier → later
         self.assertFalse(e["peer"])
         self.assertEqual(e["types"], ["method_similar"])
 
@@ -163,7 +163,9 @@ class BuildGraphDataTest(unittest.TestCase):
         _, edges, _, _ = eg.build_graph_data(papers)
         self.assertEqual(len(edges), 1)
         self.assertFalse(edges[0]["peer"])
-        self.assertEqual((edges[0]["source"], edges[0]["target"]), (2, 1))
+        # earlier → later: paper 2 says "1 is my predecessor", so the arrow
+        # leaves 1 and lands on 2 (2026-10-04: matches Obsidian's old→new rule)
+        self.assertEqual((edges[0]["source"], edges[0]["target"]), (1, 2))
 
 
 class RenderHtmlTest(unittest.TestCase):

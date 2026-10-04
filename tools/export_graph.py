@@ -6,8 +6,10 @@ their declared ``relations`` as a force-directed SVG graph:
   * edge color = relation type (method_similar / problem_related /
     complementary / evolutionary), with a clickable legend that hides a type;
   * arrows = direction: a ``predecessor``/``successor`` declaration draws one
-    arrowhead pointing later → earlier; a ``peer`` declaration draws a dashed
-    edge with arrowheads on both ends (parallel work, no influence order);
+    arrowhead pointing earlier → later (the academic-influence flow, the same
+    convention as the Obsidian graph view — the two viewers must not disagree);
+    a ``peer`` declaration draws a dashed edge with arrowheads on both ends
+    (parallel work, no influence order);
   * mutual declarations (A lists B, B lists A) collapse into one edge;
   * clicking a node opens a side panel with the paper's relations in the
     shared Chinese vocabulary (RELATION_TYPE_CN / DIRECTION_CN).
@@ -86,9 +88,13 @@ def build_graph_data(papers: list) -> tuple:
             # anything else renders as an undirected peer line
             # (validate_relations is what reports the bad value).
             directed = direction in ("predecessor", "successor")
-            # Arrow source→target runs later → earlier: "B is my predecessor"
-            # means the arrow leaves me (the later paper) and lands on B.
+            # Arrow source→target runs earlier → later, matching the Obsidian
+            # graph view (SKILL.md §4.6: 旧论文 → 新论文). "B is my predecessor"
+            # means the arrow leaves B and lands on me. peer/undirected has no
+            # order to encode — keep it as declared (drawn double-headed).
             if direction == "successor":
+                src, dst = pid, tid
+            elif direction == "predecessor":
                 src, dst = tid, pid
             else:
                 src, dst = pid, tid
@@ -229,7 +235,7 @@ DATA.edges.forEach(e => {
   if (e.peer) {           // parallel work: arrows on both ends, no order
     e.el.setAttribute('marker-start', 'url(#ar-' + mk + ')');
     e.el.setAttribute('marker-end', 'url(#ar-' + mk + ')');
-  } else {                // later → earlier, one arrowhead
+  } else {                // earlier → later, arrowhead lands on the later paper
     e.el.setAttribute('marker-end', 'url(#ar-' + mk + ')');
   }
   edgeG.appendChild(e.el);
@@ -359,7 +365,7 @@ function select(n) {
     const other = byId[e.source === n.id ? e.target : e.source];
     const dir = e.peer ? '__PEER_CN__'
       : (e.source === n.id
-        ? '本文建立于它之上（前作）' : '它建立于本文之上（后继）');
+        ? '它建立于本文之上（后继）' : '本文建立于它之上（前作）');
     e.types.forEach(t => rels.push(
       '<div class="rel" style="border-left-color:' + typeColor(t) + '">' +
       typeName(t) + ' · ' + dir + '<br><b>' + esc(other.title || other.label) +

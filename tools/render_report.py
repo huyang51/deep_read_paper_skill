@@ -576,15 +576,43 @@ def github_alerts(html_text):
 # The report template also writes light-weight callouts as a bare blockquote
 # opening with 💡 or ⚠️ (no [!TIP] marker). They must get the same classes, or
 # they render as plain quotes and the warn border never shows.
-_EMOJI_CALLOUT = re.compile(r"<blockquote><p>(""" + "\U0001f4a1|⚠️|⚠" + r")")
+# Two traps found by the 2026-10-04 audit, both absent from the hand-joined
+# unit-test string this once passed on:
+#  1. the Markdown library emits "<blockquote>\n<p>…" — `\s*` before `<p>`
+#     (mirrors _ALERT) is required or nothing in a real report ever matched;
+#  2. adjacent `>` blocks merge into ONE blockquote even across blank lines,
+#     so an emoji callout below a plain quote is not at the block's head —
+#     split_merged cuts it out first, same remedy github_alerts uses.
+_EMOJI = "\U0001f4a1|⚠️|⚠"
+# The canonical template form is "> **💡 核心洞察**：…" — the emoji can hide
+# inside the paragraph's opening <strong>/<em> (real vault reports confirmed
+# the bold form is what actually gets written), so both shapes must match.
+_EMOJI_LEAD = r"(?:<strong>|<em>)?\s*"
+_EMOJI_CALLOUT = re.compile(r"<blockquote>\s*<p>(" + _EMOJI_LEAD + ")(" + _EMOJI + ")")
+_EMOJI_MARK = re.compile(r"<p>\s*" + _EMOJI_LEAD + "(?:" + _EMOJI + ")")
 
 
 def emoji_callouts(html_text):
     def rep(m):
-        warn = m.group(1).startswith("⚠")
-        return ('<blockquote class="callout%s"><p>%s'
-                % (" warn" if warn else "", m.group(1)))
-    return _EMOJI_CALLOUT.sub(rep, html_text)
+        warn = m.group(2).startswith("⚠")
+        return ('<blockquote class="callout%s"><p>%s%s'
+                % (" warn" if warn else "", m.group(1), m.group(2)))
+
+    def split_merged(m):
+        body = m.group(1)
+        marks = list(_EMOJI_MARK.finditer(body))
+        if not marks:
+            return m.group(0)
+        parts, pos = [], 0
+        for mk in marks:
+            if mk.start() > pos:
+                parts.append(body[pos:mk.start()])
+                parts.append("</blockquote><blockquote>")
+            pos = mk.start()
+        parts.append(body[pos:])
+        return "<blockquote>" + "".join(parts) + "</blockquote>"
+
+    return _EMOJI_CALLOUT.sub(rep, _BLOCKQUOTE.sub(split_merged, html_text))
 
 
 def external_links(html_text):
