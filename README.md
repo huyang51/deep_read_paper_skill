@@ -234,7 +234,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | Report structure and section numbers | `references/report_template.md` — keep its "structures the renderer recognizes" section in sync, that's what the HTML renderer parses |
 | How the report *looks* in HTML (palette, typography, TOC/zoom/theme) | `tools/render_report.py` |
 | Vault paper-file schema, relation rules, graph sync | `mcp_server/` (`markdown_parser.py`, `relations.py`) |
-| MCP tool schemas/behavior | `mcp_server/server.py` (keep `TOOLS` in sync with the Pydantic models — `tests/test_tools_schema.py` enforces this) |
+| MCP tool schemas/behavior | `mcp_server/server.py` (keep `TOOLS` in sync with the Pydantic models) |
 | Obsidian side (templates, Dataview, graph config) | `vault-template/` (seeded to a new vault by `bootstrap.py --seed-obsidian`; an existing vault is **not** auto-updated — additive only) |
 | Prompt-trigger keywords, vault path, embedding model | `settings.json` (see above) |
 | Hook-injected context | `hooks/user_prompt_submit.py`, `hooks/session_start.py` |

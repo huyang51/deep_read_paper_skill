@@ -288,9 +288,9 @@ function tick() {
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
     // Linear Hooke's law. The old extra `* d * 0.01` made F ∝ (d-150)·d:
     // with ~150 nodes a stray wide pair fed back quadratically and every
-    // coordinate went Infinity→NaN by frame ~20 (blank canvas). tests/
-    // test_export_graph.py runs THIS tick under node to keep it provably
-    // stable at vault sizes the 2-node real vault never exercised.
+    // coordinate went Infinity→NaN by frame ~20 (blank canvas). Do not
+    // reintroduce a d-scaled term: the linear form is what keeps large vaults
+    // (the 2-node real vault never exercised them) stable.
     const f = (d - 150) * 0.02 * alpha;
     a.vx += dx / d * f; a.vy += dy / d * f;
     b.vx -= dx / d * f; b.vy -= dy / d * f;

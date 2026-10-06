@@ -117,11 +117,10 @@ def get_store() -> ChromaStore:
 # ═══════════════════════════════════════════════════════════════════════════════
 # The TOOLS list below is the inputSchema the model sees, and models.py is what
 # each handler validates against — they are two descriptions of one contract, so
-# a field added to a model must be added here too. tests/test_tools_schema.py
-# cross-checks the two (properties, required sets, and the enum vocabularies
-# against relations.py), so the pairing is enforced rather than remembered:
-# deleting a model field without its schema property fails there, not in the
-# vault.
+# a field added to a model must be added here too. Keep the pairing by hand:
+# diff the properties, required sets, and the enum vocabularies (against
+# relations.py) whenever either side changes — a model field deleted without
+# its schema property otherwise surfaces as a vault error, not a failure here.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── tool definitions ───────────────────────────────────────────────────────

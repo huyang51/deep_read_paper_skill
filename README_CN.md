@@ -230,7 +230,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 | 报告结构与章节编号 | `references/report_template.md`——同步维护其中"渲染器认识的结构"一节，HTML 渲染靠它 |
 | 报告 HTML 的外观（配色、排版、目录/缩放/主题切换） | `tools/render_report.py` |
 | Vault 论文文件结构、关系规则、图谱同步 | `mcp_server/`（`markdown_parser.py`、`relations.py`） |
-| MCP 工具的 schema 与行为 | `mcp_server/server.py`（`TOOLS` 必须与 Pydantic 模型同步——`tests/test_tools_schema.py` 强制对拍） |
+| MCP 工具的 schema 与行为 | `mcp_server/server.py`（`TOOLS` 必须与 Pydantic 模型同步） |
 | Obsidian 侧（模板、Dataview、图谱配置） | `vault-template/`（由 `bootstrap.py --seed-obsidian` 播种到新 vault；存量 vault 只增不改，不会自动更新） |
 | 触发关键词、vault 路径、embedding 模型 | `settings.json`（见上） |
 | Hook 注入的上下文 | `hooks/user_prompt_submit.py`、`hooks/session_start.py` |

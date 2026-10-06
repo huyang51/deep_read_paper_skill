@@ -19,3 +19,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Local test code (kept out of the repo by request)
+tests/
+.pytest_cache/
