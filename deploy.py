@@ -134,7 +134,7 @@ def load_settings() -> dict:
     if not settings.get("vault_dir"):
         print("[ERROR] settings.json: vault_dir is required and cannot be empty.")
         print("  vault_dir: Absolute path to your Obsidian vault / knowledge base directory.")
-        print("  Example: \"D:/Paper_read/knowledge-base\"")
+        print("  Example: \"D:/my-papers/knowledge-base\"")
         sys.exit(1)
 
     # The example file ships literal placeholders. Left unedited, deploy would
