@@ -257,7 +257,7 @@ The skill automatically:
 3. Crops figures to high-DPI PNGs (geometry-based) — vision-checks them and embeds the core ones in the report
 4. Performs 11-dimension deep analysis in one full-context pass (ultra tier: 3 parallel agents + contradiction arbitration)
 5. Clears one unified QA gate (fresh-eyes agent: fact sampling + readability), then generates the Chinese report → `reports/<short_name>_解读报告.md`
-6. Renders the report to a standalone HTML reading view next to it (Phase 3.6) — the `.md` stays the single source of truth, re-render after any edit
+6. Renders the report to a standalone HTML reading view in `html/` (Phase 3.6) — the `.md` stays the single source of truth, re-render after any edit
 7. Creates a structured memory entry → `papers/<short_name>.md` (with `read_mode` recorded)
 8. Indexes into ChromaDB for semantic search
 9. Runs cross-paper comparison and creates insight files (if related papers exist)
@@ -277,7 +277,7 @@ python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"
 | `--embed-katex` | Inline the cached KaTeX into the HTML — one self-contained file that opens fully offline |
 | `--katex-dir DIR` | Use a local KaTeX `dist/` directory instead of the cache |
 | `--offline` | Load no KaTeX at all (formulas stay as readable LaTeX source) |
-| `--out FILE` | Write the HTML elsewhere (default: next to the `.md`) |
+| `--out FILE` | Write the HTML elsewhere (default: the `html/` dir beside `reports/`) |
 
 Cache location: `%LOCALAPPDATA%\deep-read-paper` (Windows) or `~/.cache/deep-read-paper` (Linux/macOS); override with `DEEP_READ_CACHE`. Figures are relative links into `../attachments/` and all UI JavaScript is inline, so the reading view needs no network except for KaTeX in CDN mode.
 
@@ -369,7 +369,8 @@ deep_read_paper_skill/
 ```
 <vault_dir>/
 ├── papers/          # Structured paper memory (.md with YAML + wikilinks)
-├── reports/         # Full Chinese reports (.md + auto-rendered .html reading view, figure crops embedded)
+├── reports/         # Full Chinese reports (.md)
+├── html/            # Auto-rendered HTML reading views (<short_name>_解读报告.html)
 ├── citations/       # Citation-verification artifacts (<short_name>_引用核验.md + <short_name>_cite_ledger.json)
 ├── insights/        # Cross-paper innovation insights (auto-generated)
 ├── attachments/     # Per-paper figure crops (<short_name>/*.png + manifest.json)
@@ -399,7 +400,7 @@ This skill has produced knowledge bases covering:
 | Multimodal Retrieval | FLMR, PreFLMR, ReT, UniIR, AgentKB | Late-interaction retrieval paradigm evolution |
 
 Each paper report includes:
-- A **standalone HTML reading view** rendered alongside the Markdown
+- A **standalone HTML reading view** rendered into the `html/` directory
 - A **30-second flash card** at the top
 - **Method genealogy table** tracing components to prior work
 - **Claim-evidence mapping** — every claim checked against experimental support

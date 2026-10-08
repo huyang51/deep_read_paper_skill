@@ -253,7 +253,7 @@ cp -r vault-template/ /your/knowledge-base/path/
 3. 按 PDF 对象坐标几何裁剪图表为高清 PNG，逐张视觉核验后嵌入报告核心图速览
 4. 单上下文一遍通读完成十一维深度分析（超长档：3 组并行 + 矛盾检测与仲裁）
 5. 通过统一 QA 门禁（局外人代理：事实抽查 + 可读性五问）后生成中文解读报告 → `reports/<短名>_解读报告.md`
-6. 在同目录渲染配套 HTML 阅读视图（阶段 3.6）——`.md` 始终是唯一事实源，改完重渲染即可
+6. 渲染配套 HTML 阅读视图到 `html/` 目录（阶段 3.6）——`.md` 始终是唯一事实源，改完重渲染即可
 7. 创建结构化记忆条目 → `papers/<短名>.md`（记录 read_mode 档位）
 8. ChromaDB 向量化索引
 9. 如果知识库中有相关论文 → 跨论文对比 + 创建洞察文件
@@ -273,7 +273,7 @@ python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"
 | `--embed-katex` | 把缓存中的 KaTeX 内嵌进 HTML——单文件自包含，断网也能正常打开 |
 | `--katex-dir DIR` | 指定本地 KaTeX `dist/` 目录替代缓存 |
 | `--offline` | 完全不加载 KaTeX（公式保留为可读 LaTeX 源码） |
-| `--out FILE` | 输出到别处（默认与 `.md` 同目录同名） |
+| `--out FILE` | 输出到别处（默认 `reports/` 旁的 `html/` 目录） |
 
 缓存位置：Windows 为 `%LOCALAPPDATA%\deep-read-paper`，Linux/macOS 为 `~/.cache/deep-read-paper`，可用 `DEEP_READ_CACHE` 覆盖。图片是 `../attachments/` 相对路径、交互 JS 全部内联——除 CDN 档的 KaTeX 外，阅读视图不依赖网络。
 
@@ -367,7 +367,8 @@ deep_read_paper_skill/
 ```
 <vault_dir>/
 ├── papers/          # 论文结构化记忆（.md 含 YAML + wikilinks）
-├── reports/         # 完整中文报告（.md + 自动渲染的同名 .html 阅读视图，嵌入原图）
+├── reports/         # 完整中文报告（.md）
+├── html/            # 自动渲染的 HTML 阅读视图（<short_name>_解读报告.html）
 ├── citations/       # 引用核验产物（<short_name>_引用核验.md + <short_name>_cite_ledger.json）
 ├── insights/        # 跨论文创新洞察（自动生成）
 ├── attachments/     # 每篇论文的图表裁剪（<short_name>/*.png + manifest.json）
@@ -397,7 +398,7 @@ deep_read_paper_skill/
 | 多模态检索 | FLMR, PreFLMR, ReT, UniIR, AgentKB | Late-interaction 检索范式演进 |
 
 每篇论文报告包含：
-- 与 md 同目录的 **独立 HTML 阅读视图**
+- 位于 `html/` 目录的 **独立 HTML 阅读视图**
 - 顶部的 **30 秒速览卡片**
 - **方法溯源表**——哪些设计来自哪篇前人工作
 - **声明-证据对照**——论文的每个 claim 是否有实验支撑

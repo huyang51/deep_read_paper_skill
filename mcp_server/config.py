@@ -88,6 +88,7 @@ def _load_config_val(key: str, default: str) -> str:
 VAULT_DIR = _load_vault_dir()
 PAPERS_DIR = VAULT_DIR / "papers"
 REPORTS_DIR = VAULT_DIR / "reports"
+HTML_DIR = VAULT_DIR / "html"
 CITE_DIR = VAULT_DIR / "citations"
 INSIGHTS_DIR = VAULT_DIR / "insights"
 CHROMA_DIR = VAULT_DIR / ".chromadb"

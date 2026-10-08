@@ -19,8 +19,9 @@ Design references (open-source, studied rather than copied wholesale):
 Plus the Chinese publication convention: sans headings + serif body.
 
 Hard constraints (do not change casually):
-- Output HTML sits NEXT TO the md (same dir, .html) so the report's relative
-  image paths (../attachments/<short>/x.png) stay valid — zero asset copying.
+- Output HTML goes into a sibling `html/` dir (same parent as the md's `reports/`
+  dir), so the report's relative image paths (../attachments/<short>/x.png) stay
+  valid — zero asset copying.
 - Deterministic conversion via Python-Markdown; the LLM never hand-writes HTML.
 - All UI JavaScript is inline vanilla (active-section, progress bar, zoom,
   mobile TOC, copy buttons) — works fully offline.
@@ -37,7 +38,7 @@ When every mirror is unreachable the page falls back to readable LaTeX source
 instead of showing raw `$…$`, and says so in a one-line notice.
 
 Usage:
-  python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"
+  python tools/render_report.py --md "<vault>/reports/ReT_解读报告.md"   # → <vault>/html/ReT_解读报告.html
   python tools/render_report.py --md <file.md> --out <file.html> --offline
   python tools/render_report.py --md <file.md> --fetch-katex   # 一次性下载
   python tools/render_report.py --md <file.md> --embed-katex   # 自包含单文件
@@ -1388,7 +1389,8 @@ def render_report(md_path, out_path=None, offline=False, katex=None,
                  "embed": KATEX_VERSION + "（内嵌）"}.get(
             mode, KATEX_VERSION + "（CDN 多镜像）")
 
-    out_path = Path(out_path) if out_path else md_path.with_suffix(".html")
+    out_path = (Path(out_path) if out_path
+                else md_path.parent.parent / "html" / md_path.with_suffix(".html").name)
     page = _TEMPLATE.format(
         title=html_mod.escape(title),
         css=_CSS,
@@ -1415,7 +1417,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Render a Markdown reading report "
                                              "to a standalone HTML reading view.")
     ap.add_argument("--md", default=None, help="report .md file (frontmatter ok)")
-    ap.add_argument("--out", default=None, help="output .html (default: alongside md)")
+    ap.add_argument("--out", default=None, help="output .html (default: sibling html/ dir of the md)")
     ap.add_argument("--offline", action="store_true",
                     help="no KaTeX at all (formulas stay as readable LaTeX source)")
     ap.add_argument("--embed-katex", action="store_true",

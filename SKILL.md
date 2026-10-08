@@ -78,7 +78,7 @@ PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt
 - [ ] 两张假设表已去重：§4.6.1（M 编号）与 §4.9.1（A 编号）条目互斥且完备，跨表互引编号有效，无一条假设被两处重复叙述
 - [ ] §4.10 后验影响已由 `paper_citations` 数据填写（或标注外部核验不可用）
 - [ ] 统一 QA 已执行且通过（或失败项已修复复审），未决项如实写入"✅ 验收记录"节；（超长档）维度间矛盾全部经仲裁或显式记录，无静默择一
-- [ ] HTML 阅读视图已渲染（`reports/<短名>_解读报告.html`，与 md 同名同目录；须在 QA 通过后）
+- [ ] HTML 阅读视图已渲染（`html/<短名>_解读报告.html`，与 md 同名、位于 vault 根下的 `html/`；须在 QA 通过后）
 - [ ] 让一个**不熟悉该子领域**的研究生读完后，能在不看原文的情况下复述出方法的核心机制
 
 > **违反这条原则 = 报告失败**。技术深度不等于术语堆砌——能用大白话讲清楚才是真功夫。
@@ -275,7 +275,7 @@ md 报告落盘后（必须在**统一 QA 通过、定稿之后**）渲染配套
 python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_解读报告.md"
 ```
 
-- 输出与 md **同名同目录**的 `.html`：图片相对路径（`../attachments/...`）原样有效，零拷贝
+- 输出到 **`html/` 目录**（与 `reports/` 平级、与 md 同名）的 `.html`：图片相对路径（`../attachments/...`）原样有效，零拷贝
 - 自带：frontmatter 元信息卡、侧边目录（h2/h3 自动生成）、KaTeX 公式渲染、表格/引用块/代码样式、暗色模式与打印样式、`[[wikilink]]` 转样式化文本
 - **公式**：`$…$` / `$$…$$` / `\[…\]` / 裸 `\begin{align}` 都识别；TeX 作为元素文本内容存放，每个公式单独 `katex.render()`（不依赖 `$` 配对启发式）。KaTeX 未加载或语法错误时**降级为可读的 LaTeX 源码**，不显示 `$` 噪声
 - **表格**：booktabs 横线风格、数值列右对齐（tabular-nums）、无表头表转键值表、窄屏（≤620px）≥3 列自动转卡片；单元格内公式与代码中的 `|` 均不受影响
@@ -301,8 +301,10 @@ python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_�
 ├── index.md                  # Dataview 动态索引
 ├── papers/                   # 各论文的结构化摘要（YAML frontmatter + wikilinks）
 │   └── <short_name>.md       # 如 ReT.md, PreFLMR.md
-├── reports/                  # 完整解读报告
+├── reports/                  # 完整解读报告（.md）
 │   └── <short_name>_解读报告.md
+├── html/                     # 报告 HTML 阅读视图（render_report.py 自动生成）
+│   └── <short_name>_解读报告.html
 ├── citations/                # 引用核验产物（{short_name}_引用核验.md + {short_name}_cite_ledger.json）
 └── insights/                 # 跨论文创新见解
     └── <见解标题>.md
@@ -481,11 +483,11 @@ python tools/migrate_relations.py --set-type 1=complementary --apply   # 类别�
 
 ### 4.6 Obsidian 图谱视图
 
-图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`citations/`、`insights/`、`.obsidian/templates/` 目录通过 `search` 过滤串隐藏（用户可在图谱设置的搜索框中手动切换），论文节点经 `colorGroups` 以主色高亮、一眼可辨：
+图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`html/`、`citations/`、`insights/`、`.obsidian/templates/` 目录通过 `search` 过滤串隐藏（用户可在图谱设置的搜索框中手动切换），论文节点经 `colorGroups` 以主色高亮、一眼可辨：
 
 ```json
 {
-  "search": "-path:reports/ -path:citations/ -path:insights/ -path:.obsidian/templates/",
+  "search": "-path:reports/ -path:html/ -path:citations/ -path:insights/ -path:.obsidian/templates/",
   "colorGroups": [
     { "query": "path:papers/", "color": { "a": 1, "rgb": 3900150 } }
   ]
@@ -543,7 +545,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 4. **记忆维护**：阅读 5 篇以上论文后，回顾早期论文的 `relations` 是否仍然准确（新论文可能改变"发展关系"的判定），改完用 `python tools/migrate_relations.py --check` 或 `tools/verify_graph_arrows.py` 复核；**不要**手工编辑 `related_papers` / `## 后续引用`（它们是投影，会被同步覆盖）
 5. **完成报告**：全部阶段完成后，仅回复"完成"，不附加任何过程检查项（如"无 Read 调用、无编码错误、无重复文件"等）。**standard/超长档的"完成"以统一 QA 通过为前提**；若有未决项，回复"完成（有未决项，见验收记录）"并给一行摘要
 6. **档位纪律**：分诊结论告知后直接执行不等待确认；**默认走 standard 单上下文通读，不要主动升超长档**；超长档三组任务卡必须同一条消息内并行派发（勿串行），派发前完成 `orchestration_prompts.md`"派发前必做"六条（绝对路径 / 视觉分工 / 台账补验 / 页码契约 / **分页硬契约**——分组读页清单列死、并集覆盖全页、清单外禁读 / **类型透传**——论文类型与该类型的维度调整行注入每张卡）；`.dimcards/` 保留不删
-7. **HTML 是构建产物**：`reports/*.html` 由 `render_report.py` 生成，**禁止手工编辑**；md 报告任何修改后必须重跑渲染同步
+7. **HTML 是构建产物**：`html/*.html` 由 `render_report.py` 生成，**禁止手工编辑**；md 报告任何修改后必须重跑渲染同步
 
 ## 参考资源
 
@@ -552,7 +554,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 记忆条目模板：`references/memory_entry_template.md`
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3）
 - 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`；使用规则见 `references/dimensions.md`"🌐 外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见同节第 4 条；配额熔断 + `--resume` 补跑见"配额纪律"）
-- HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → 同名 .html，KaTeX/目录/嵌图；用法见 Phase 3.6）
+- HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → `html/` 同名 .html，KaTeX/目录/嵌图；用法见 Phase 3.6）
 - 跨论文关系：结构化 `relations` frontmatter（唯一事实源，规则见 4.5；实现 `mcp_server/relations.py`）；体检 `tools/verify_graph_arrows.py`、旧 vault 迁移 `tools/migrate_relations.py`
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）
 - 超长档编排任务卡：`references/orchestration_prompts.md`（三组维度卡 + 分页硬契约 + 装配矛盾检测 + 统一 QA 卡 + 仲裁卡；仅 >60 页或点名编排时加载，普通论文用 standard 档不需本文件）
