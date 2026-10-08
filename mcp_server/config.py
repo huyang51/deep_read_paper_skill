@@ -88,6 +88,7 @@ def _load_config_val(key: str, default: str) -> str:
 VAULT_DIR = _load_vault_dir()
 PAPERS_DIR = VAULT_DIR / "papers"
 REPORTS_DIR = VAULT_DIR / "reports"
+CITE_DIR = VAULT_DIR / "citations"
 INSIGHTS_DIR = VAULT_DIR / "insights"
 CHROMA_DIR = VAULT_DIR / ".chromadb"
 EMBEDDING_MODEL = _load_config_val("embedding_model", "paraphrase-multilingual-MiniLM-L12-v2")

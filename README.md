@@ -370,6 +370,7 @@ deep_read_paper_skill/
 <vault_dir>/
 ├── papers/          # Structured paper memory (.md with YAML + wikilinks)
 ├── reports/         # Full Chinese reports (.md + auto-rendered .html reading view, figure crops embedded)
+├── citations/       # Citation-verification artifacts (<short_name>_引用核验.md + <short_name>_cite_ledger.json)
 ├── insights/        # Cross-paper innovation insights (auto-generated)
 ├── attachments/     # Per-paper figure crops (<short_name>/*.png + manifest.json)
 ├── index.md         # Dataview dynamic index

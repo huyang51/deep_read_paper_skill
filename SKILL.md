@@ -303,6 +303,7 @@ python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_�
 │   └── <short_name>.md       # 如 ReT.md, PreFLMR.md
 ├── reports/                  # 完整解读报告
 │   └── <short_name>_解读报告.md
+├── citations/                # 引用核验产物（{short_name}_引用核验.md + {short_name}_cite_ledger.json）
 └── insights/                 # 跨论文创新见解
     └── <见解标题>.md
 ```
@@ -480,11 +481,11 @@ python tools/migrate_relations.py --set-type 1=complementary --apply   # 类别�
 
 ### 4.6 Obsidian 图谱视图
 
-图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`insights/`、`.obsidian/templates/` 目录通过 `search` 过滤串隐藏（用户可在图谱设置的搜索框中手动切换），论文节点经 `colorGroups` 以主色高亮、一眼可辨：
+图谱默认配置中 `showArrow: true`，连线带箭头以显示引用方向。为保持视图整洁，`reports/`、`citations/`、`insights/`、`.obsidian/templates/` 目录通过 `search` 过滤串隐藏（用户可在图谱设置的搜索框中手动切换），论文节点经 `colorGroups` 以主色高亮、一眼可辨：
 
 ```json
 {
-  "search": "-path:reports/ -path:insights/ -path:.obsidian/templates/",
+  "search": "-path:reports/ -path:citations/ -path:insights/ -path:.obsidian/templates/",
   "colorGroups": [
     { "query": "path:papers/", "color": { "a": 1, "rgb": 3900150 } }
   ]

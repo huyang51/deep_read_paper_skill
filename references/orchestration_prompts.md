@@ -12,7 +12,7 @@
 2. **视觉分工**：子代理会话**无视觉通道**（Read PNG 返回 `[Unsupported Image]`，vision API 亦被阻断）——主会话在派发前**亲自 Read 将被报告引用的关键图**，把观察文本以"【主会话视觉观察记录】…"注入对应任务卡；子代理一律不得试读 PNG 或调 vision API，图相关结论只引用注入的观察并标 `[据主会话视觉核验]`，无记录可引则标"未经视觉核验"。
 3. **外部断言补验**：子代理会话**无 MCP 工具**——外部断言一律标 `【待核验】`；主会话装配前用 CLI 批量补验并落台账：
    ```bash
-   python "<skill_dir>/tools/verify_refs.py" --refs "<台账清单>" --out "<vault_dir>/cite_ledger.json"
+   python "<skill_dir>/tools/verify_refs.py" --refs "<台账清单>" --out "<vault_dir>/citations/cite_ledger.json"
    ```
    清单 = 卡片里所有【待核验】条目 + 报告点名的外部工作（`标题 | 作者 | 年份 | doi:/arxiv:`，作者照论文原文填）；装配时按台账补 `[外部核验: …]` 标注，同一份台账直接喂给报告 §6 存在性门（dimensions.md『🌐 外部断言核验』规则 4）。⚠️ 退出码 2 = 有行网络失败/待重试，**重跑这些行**而非降级了事。
 4. **页码契约**：锚点页码一律指 **PDF 物理页序 = `.pdf_page_i.txt` 文件编号**；印刷页标常有 −1/−2 漂移（实测三卡对同一表报 p.15~p.17，真值 p.18），装配"六对张力"第 6 项以文件为准。

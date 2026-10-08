@@ -1,5 +1,5 @@
 {
-  "search": "-path:reports/ -path:insights/ -path:.obsidian/templates/",
+  "search": "-path:reports/ -path:citations/ -path:insights/ -path:.obsidian/templates/",
   "showTags": true,
   "showAttachments": false,
   "hideUnresolved": false,

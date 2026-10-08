@@ -368,6 +368,7 @@ deep_read_paper_skill/
 <vault_dir>/
 ├── papers/          # 论文结构化记忆（.md 含 YAML + wikilinks）
 ├── reports/         # 完整中文报告（.md + 自动渲染的同名 .html 阅读视图，嵌入原图）
+├── citations/       # 引用核验产物（<short_name>_引用核验.md + <short_name>_cite_ledger.json）
 ├── insights/        # 跨论文创新洞察（自动生成）
 ├── attachments/     # 每篇论文的图表裁剪（<short_name>/*.png + manifest.json）
 ├── index.md         # Dataview 动态索引

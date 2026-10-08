@@ -1051,7 +1051,7 @@ def method_forward(batch):
 > 报告中**点名**的外部工作（基座方法、基线、同期工作、反事实里的"更强基线"）逐条核验存在性——报告定稿前用 `tools/verify_refs.py` 跑一次，把产出的 Markdown 表**原样粘进本节**（`--md` 输出即下表）：
 >
 > ```bash
-> python "<skill_dir>/tools/verify_refs.py" --refs "<清单文件>" --md "<vault>/reports/{short_name}_引用核验.md"
+> python "<skill_dir>/tools/verify_refs.py" --refs "<清单文件>" --md "<vault>/citations/{short_name}_引用核验.md"
 > ```
 >
 > 核验是**存在性门**，不是"伪造引用检测"：❓ 未收录只说明外部库没覆盖（workshop/学位论文/非英文 venue/新预印本），**不得写成"不存在"**。

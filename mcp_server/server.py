@@ -697,12 +697,12 @@ def ensure_vault_dirs():
     """Create the vault's standard subdirectories.
 
     papers/ is created on demand by create_paper_file, .chromadb/ by ChromaDB and
-    attachments/ by extract_figures.py — but nothing created reports/ or
-    insights/, even though README, SKILL.md and the report workflow all treat
+    attachments/ by extract_figures.py — but nothing created reports/, citations/
+    or insights/, even though README, SKILL.md and the report workflow all treat
     them as part of the layout. Creating them here makes the documented tree
     real on first start.
     """
-    for directory in (config.PAPERS_DIR, config.REPORTS_DIR, config.INSIGHTS_DIR):
+    for directory in (config.PAPERS_DIR, config.REPORTS_DIR, config.CITE_DIR, config.INSIGHTS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
 
