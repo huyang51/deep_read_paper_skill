@@ -37,6 +37,33 @@ they render fine as text and wrapping them is cosmetic. Nor is `C > γ` or
 into the page. The rules above are deliberately limited to signals that mean
 the source carries **LaTeX syntax the renderer will not interpret**.
 
+Measured (2026-10-09, after tuning)
+-----------------------------------
+  recall    18/18 = 100% on a hand-labelled set of 20 real broken-formula
+            shapes (caret / subscript / combining bar / flattened superscript /
+            unclosed `$$` / full-width parens / bare TeX command / …)
+  precision 0 false positives on that set, and 0 across all 22 files of the
+            vault (6 reports + 6 paper entries + related notes)
+  broad     40 hits over 118 real .md files outside the vault, of which ~4 are
+            false positives — all in vendored code repos (`O^2-Searcher` as a
+            paper title, `D^2`/`O(n^2)` inside faiss's CHANGELOG). Down from
+            94 hits / ~60 FP before tuning.
+
+Known limits — read these before trusting a clean run
+-----------------------------------------------------
+1. This is a **lexical** check. It finds LaTeX *syntax* left uninterpreted. It
+   cannot find math that was written as ordinary prose with no syntax at all
+   (`q 由 qT 与 qV 组成`) — no regex can, and such text renders "correctly"
+   while being imprecise. That is a writing problem, not a rendering one.
+2. A bare `{T,V}` group is not flagged: it renders as readable text and
+   flagging `{}` would fire on every JSDoc/format string in a non-report file.
+3. `$` followed by a digit is treated as currency (`$1000`) and skipped, so a
+   broken formula that happens to start with a digit right after `$` is
+   missed. Chosen because currency was the measured false positive.
+4. The `dollar` rule's judgement of "the renderer rejected this pair" is a
+   *mirror* of render_report.protect_math()'s regexes. If those change, this
+   must change with them — the coupling is commented on both sides.
+
 Usage
 -----
     python tools/lint_math.py reports/Foo_解读报告.md
@@ -74,20 +101,42 @@ _INLINE_HTML_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _ESCAPED_DOLLAR_RE = re.compile(r"\\\$")
 _CJK_RE = re.compile(r"[⺀-ㄯ㐀-䶿一-鿿豈-﫿]")
 
+# Each rule carries a `negative lookbehind/lookahead` tuned so that the
+# dominant false-positive classes measured on a broad corpus (2026-10-09,
+# 118 real .md files) do not fire. Precision matters more than recall here:
+# this gate runs in the report pipeline, and a noisy gate gets ignored.
 RULES = [
-    ("caret", re.compile(r"\^"),
+    # `VILA^2`, `O^2-Searcher` are model names, not math — an all-caps run
+    # before the caret is the tell.
+    ("caret", re.compile(r"(?<![A-Z]{2})\^"),
      "caret outside math — write `$…$`"),
-    ("subscript", re.compile(r"(?<![A-Za-z0-9_\\])[A-Za-z]_"),
-     "identifier subscript outside math — write `$…$`"),
-    ("backslash", re.compile(r"\\[A-Za-z]{2,}"),
+    # `x_i`, `h_l`, `C_{k+1}` — but NOT the snake_case identifiers `k_factor`,
+    # `c_api`, `D_panorama` (their first segment is a single letter too, so the
+    # discriminator has to be what follows: a real subscript is one token and
+    # then stops, an identifier keeps going).
+    ("subscript", re.compile(r"(?<![A-Za-z0-9_\\])[A-Za-z]_(?:\{|[A-Za-z0-9](?![\w]))"),
+     "identifier subscript outside math — write `$…$` (if this is a code "
+     "identifier like `k_factor`, wrap it in backticks)"),
+    # `C:\Users\…`, `\.ollama\models`, `D:\claude__code` are Windows paths, not
+    # `\U` / `\o` / `\c` control sequences. A real TeX command is never glued
+    # to a letter/digit/dot/colon/backslash on its left — it follows a space,
+    # `$`, `{`, `(` or line start.
+    ("backslash", re.compile(r"(?<![A-Za-z0-9_.\\:])\\[A-Za-z]{2,}"),
      "LaTeX command outside math — write `$…$`"),
     ("combining", re.compile(r"[̀-ͯ]"),
      "combining mark (e.g. d̄ = d+U+0304) — write `$\\bar{d}$`"),
-    ("paren-form", re.compile(r"[A-Za-z]\s*=\s*\("),
+    # both ASCII and full-width parens — a report written in Chinese mixes them
+    ("paren-form", re.compile(r"[A-Za-z]\s*=\s*[（(]"),
      "`x=(…)` looks like a flattened formula — write `$…$`"),
-    ("dollar", re.compile(r"\$"),
+    # A lone `$` usually IS the bug (renderer rejected the pair). The measured
+    # exceptions are currency and shell variables, which always run `$` straight
+    # into a digit or an ALL-CAPS name. No trailing `\b` on the name: in
+    # `$USER输出` the next char is CJK, which counts as a word char, so `\b`
+    # would not fire and the exemption would be lost.
+    ("dollar", re.compile(r"\$(?!\d)(?![A-Z][A-Z0-9_]*)"),
      "stray/unbalanced `$` — the renderer did NOT accept this pair, so the "
-     "dollar shows up as literal text (e.g. `$k > $ x` → write `$k$ > x`)"),
+     "dollar shows up as literal text (e.g. `$k > $ x` → write `$k$ > x`; "
+     "for currency write `\\$`)"),
 ]
 
 
@@ -144,8 +193,39 @@ def lint_text(text):
     return hits
 
 
+def _read(path):
+    """utf-8 first, then the encodings a report actually shows up in. A single
+    undecodable byte must not abort a whole-directory sweep (the skill runs on
+    Windows too, where GBK .md files exist — the same trap 1.1 warns about)."""
+    try:
+        return Path(path).read_text(encoding="utf-8"), None
+    except (UnicodeDecodeError, LookupError):
+        pass
+    for enc in ("utf-8-sig", "gb18030"):
+        try:
+            return Path(path).read_text(encoding=enc), enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return None, None
+
+
+def _looks_binary(text):
+    """A `.md` that decodes but is really a binary blob (mis-encoded export,
+    embedded object) produces pages of junk that trip every rule. Demand that
+    most characters be printable before trusting a file."""
+    if not text:
+        return False
+    sample = text[:8192]
+    bad = sum(1 for c in sample
+              if c not in "\t\n\r" and (ord(c) < 32 or ord(c) == 0xFFFD))
+    return bad / len(sample) > 0.02
+
+
 def lint_file(path):
-    return lint_text(Path(path).read_text(encoding="utf-8"))
+    text, _enc = _read(path)
+    if text is None or _looks_binary(text):
+        return []
+    return lint_text(text)
 
 
 def iter_targets(target):
