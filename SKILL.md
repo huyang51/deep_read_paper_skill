@@ -298,6 +298,13 @@ python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_�
 
 - **渲染前必跑 `tools/lint_math.py`**：它扫描 .md 里**没有 `$…$` 定界符的公式**（`E^V_l`、`h_{l+1}`、`q=(qT,qV)`、`d̄`）。这类写法渲染器不会解释，会在 **.md 与 .html 里都显示成原始文本**——渲染器不做 `$` 配对自动识别，`--offline` 的"降级为源码"又会让它看起来只是 KaTeX 没加载，两种失败难以区分。exit 1 时先修 md 再渲染。`render_report.py` 内部也会对同一问题打 `[WARN]`（非阻断，便于边修边渲）
 - **推荐 `--embed-katex`**（先 `--fetch-katex` 一次）：KaTeX 的 JS/CSS/字体内嵌进单文件（每份约 700KB+），**离线可开**。默认的 CDN 模式在断网时公式**静默不渲染**，读者看到的仍是源码
+- **渲染后跑 `tools/verify_math.py`**（两种阅读视图都要验）：
+
+  ```bash
+  python "<skill_dir>/tools/verify_math.py" "<vault>/reports/" --mathjax-dir <含 node_modules/mathjax-full 的目录>
+  ```
+
+  报告有两个阅读视图、**两套不同的数学引擎**：vault 里的 `.md` 在 **Obsidian（MathJax）** 里读，`html/*.html` 在浏览器里用 **KaTeX** 渲染。`lint_math.py` 只回答"公式有没有漏 `$`"；**这个工具回答"定界符都在的情况下，读者能不能真看到公式"**——两者的失败模式不同：`\tag{1}` 能通过 lint、能通过 KaTeX、也能通过"装了全部包的 MathJax"，但在 Obsidian 里报 `Undefined control sequence`（Obsidian 不启用 AMS 编号）。该工具让 MathJax 用**默认包集**渲染（最保守配置，需要可选包的一律算失败），所以通过 = 到哪都能显示
 
 - 输出到 **`html/` 目录**（与 `reports/` 平级、与 md 同名）的 `.html`：图片相对路径（`../attachments/...`）原样有效，零拷贝
 - 自带：frontmatter 元信息卡、侧边目录（h2/h3 自动生成）、KaTeX 公式渲染、表格/引用块/代码样式、暗色模式与打印样式、`[[wikilink]]` 转样式化文本
@@ -578,7 +585,8 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 记忆条目模板：`references/memory_entry_template.md`
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3）
 - 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`；使用规则见 `references/dimensions.md`"🌐 外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见同节第 4 条；配额熔断 + `--resume` 补跑见"配额纪律"）
-- 公式定界检查：`tools/lint_math.py`（扫 .md 里未加 `$…$` 的公式，渲染前必须 exit 0；`render_report.py` 亦内嵌同一告警）；用法见 Phase 3.6
+- 公式定界检查：`tools/lint_math.py`（扫 .md 里未加 `$…$` 的公式，**渲染前**必须 exit 0；`render_report.py` 亦内嵌同一告警）；用法见 Phase 3.6
+- 公式显示检查：`tools/verify_math.py`（**渲染后**验两种视图——Obsidian/MathJax 的 `$` 配对与敌对命令 + HTML/KaTeX；MathJax 按**默认包集**渲染，通过即可到哪都显示）；用法见 Phase 3.6
 - HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → `html/` 同名 .html，KaTeX/目录/嵌图；用法见 Phase 3.6）
 - 跨论文关系：结构化 `relations` frontmatter（唯一事实源，规则见 4.5；实现 `mcp_server/relations.py`）；体检 `tools/verify_graph_arrows.py`、旧 vault 迁移 `tools/migrate_relations.py`
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）
