@@ -55,15 +55,24 @@ from pathlib import Path
 _FENCE_RE = re.compile(r"^([ \t]*)(```+|~~~+)[^\n]*\n.*?^\1\2[ \t]*$",
                        re.DOTALL | re.MULTILINE)
 _INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+# COUPLING: these two dollar patterns mirror render_report.protect_math()'s
+# acceptors. They must stay identical to it, or the lint strips math the
+# renderer will NOT treat as math and the leftover-`$` rule below goes blind.
+# That is exactly the `$k > $` bug: the renderer's `(?<!\s)` before the closing
+# dollar rejects a `$… $` pair, so the text leaked through with literal `$`.
+_BLOCK_DOLLAR = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
+_INLINE_DOLLAR = re.compile(r"(?<!\\)\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)")
+_INLINE_DOLLAR_SP = re.compile(r"(?<!\\)\$\s+([^$\n]+?)\s+\$(?!\d)")
+_STRONG_MATH = re.compile(r"[\\^_]|[A-Za-z]\s*[=<>]")
 _MATH_RE = re.compile(
-    r"\$\$.+?\$\$"                      # $$ … $$
-    r"|\$[^$\n]+?\$"                    # $ … $
-    r"|\\\[.+?\\\]"                     # \[ … \]
+    r"\\\[.+?\\\]"                      # \[ … \]
     r"|\\\(.+?\\\)"                     # \( … \)
     r"|\\begin\{(?:equation|align|gather|eqnarray|array|matrix|bmatrix|"
     r"pmatrix|cases|split)\*?\}.+?\\end\{\w+\*?\}",
     re.DOTALL)
 _INLINE_HTML_RE = re.compile(r"</?[A-Za-z][^>]*>")
+_ESCAPED_DOLLAR_RE = re.compile(r"\\\$")
+_CJK_RE = re.compile(r"[⺀-ㄯ㐀-䶿一-鿿豈-﫿]")
 
 RULES = [
     ("caret", re.compile(r"\^"),
@@ -76,17 +85,41 @@ RULES = [
      "combining mark (e.g. d̄ = d+U+0304) — write `$\\bar{d}$`"),
     ("paren-form", re.compile(r"[A-Za-z]\s*=\s*\("),
      "`x=(…)` looks like a flattened formula — write `$…$`"),
+    ("dollar", re.compile(r"\$"),
+     "stray/unbalanced `$` — the renderer did NOT accept this pair, so the "
+     "dollar shows up as literal text (e.g. `$k > $ x` → write `$k$ > x`)"),
 ]
 
 
+def _looks_mathy(body):
+    """Mirror of render_report._looks_mathy — keeps `$5 与 $10` style prose
+    from being mistaken for a formula."""
+    if any(c in body for c in "\\^_=+{}"):
+        return True
+    if _CJK_RE.search(body) and not re.search(r"[A-Za-z]", body):
+        return False
+    return bool(re.search(r"[A-Za-z0-9]", body)) and len(body) <= 120
+
+
 def strip_nonmath(text):
-    """Text with code fences, inline code, inline HTML and delimited math
-    replaced by blanks (newlines preserved so line numbers stay valid)."""
+    """Text with code fences, inline code, inline HTML and — crucially — only
+    the math the RENDERER would accept, replaced by blanks (newlines preserved
+    so line numbers stay valid).
+
+    A `$…$` pair the renderer rejects is deliberately left in place: it will
+    surface as a literal `$` and be caught by the `dollar` rule."""
     def blank(m):
         return re.sub(r"[^\n]", " ", m.group(0))
 
+    def _inline(m, gate):
+        return blank(m) if gate(m.group(1)) else m.group(0)
+
+    text = _ESCAPED_DOLLAR_RE.sub(blank, text)     # \$ is a literal dollar
     text = _FENCE_RE.sub(blank, text)
     text = _INLINE_CODE_RE.sub(blank, text)
+    text = _BLOCK_DOLLAR.sub(blank, text)
+    text = _INLINE_DOLLAR.sub(lambda m: _inline(m, _looks_mathy), text)
+    text = _INLINE_DOLLAR_SP.sub(lambda m: _inline(m, _STRONG_MATH.search), text)
     text = _MATH_RE.sub(blank, text)
     text = _INLINE_HTML_RE.sub(blank, text)
     return text
