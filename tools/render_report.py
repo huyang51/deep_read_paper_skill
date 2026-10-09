@@ -60,6 +60,16 @@ from urllib.request import Request, urlopen
 import frontmatter
 import markdown
 
+# Math written without $…$ delimiters is invisible to protect_math() below — it
+# passes through as text, so the reader gets raw LaTeX-ish prose in the HTML.
+# tools/lint_math.py is the detector; this module only warns (non-fatal) so an
+# existing report can still be re-rendered while it is being fixed.
+try:
+    from lint_math import lint_text as _lint_bare_math
+except ImportError:                     # imported as a module from elsewhere
+    def _lint_bare_math(_text):
+        return []
+
 MD_EXTENSIONS = ["tables", "fenced_code", "sane_lists", "attr_list", "footnotes",
                  "md_in_html"]
 TS = chr(0x2009)  # thin space — built programmatically so no invisible
@@ -1348,6 +1358,13 @@ def render_report(md_path, out_path=None, offline=False, katex=None,
     body_md, fallback_title, masthead_rows = promote_body_masthead(
         post.content, post.metadata)
     post = frontmatter.Post(body_md, **(post.metadata or {}))
+
+    bare = _lint_bare_math(body_md)
+    if bare:
+        print(f"[WARN] {md_path.name}: {len(bare)} 处未加 $…$ 的公式"
+              f"（首处 L{bare[0]['line']}）。它们会在 .md 与 .html 里显示为原始"
+              f"文本；运行 tools/lint_math.py 查看全部并修复。",
+              file=sys.stderr)
 
     mode = "off" if offline else (katex or "cdn")
     needs_chem = bool(re.search(r"\\ce\{|\\pu\{", body_md))

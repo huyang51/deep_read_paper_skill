@@ -69,6 +69,7 @@ PYTHONNOUSERSITE=1 python -m pip install -r requirements.txt
 - [ ] 报告中所有前人工作都有"一句话定位"（不是只给引用编号）
 - [ ] 论文的方法/架构图已以**图片形式**嵌入报告（纯理论论文无图除外），且核心图速览每个解读块都写满了
 - [ ] 每张嵌图的解读结论都来自**亲眼 Read 过的裁图**，不是凭正文转述（1.3 视觉核验闭环已执行）
+- [ ] 报告中**所有公式都带 `$…$` / `$$…$$` 定界符**——`python tools/lint_math.py reports/` 必须 exit 0。未定界的公式（`E^V_l`、`h_{l+1}`、`q=(qT,qV)`、`d̄`）渲染器不会解释，**在 .md 与 .html 里都只显示成原始文本**；渲染器**不做 `$` 配对自动识别**（它无法把 `q=(qT,qV)` 与散文区分开），所以这是唯一能兜住的地方
 - [ ] 报告中每个**关于其他论文**的事实断言都通过了 `cite_verify`（带核验出处标注），或已显式降级为【未核验——仅模型记忆】；§6 存在性台账已由 `tools/verify_refs.py` 产出且覆盖正文点名的全部外部工作（❓/⏸ 行未被写成"不存在"）
 - [ ] §1.4 思维链每一环都有证据标注（原文明述/据数据推断/重构-原文未交代），无一处把推断冒充为作者说过的话
 - [ ] 基础知识地图（≤8 概念：定义+接线+深度）已填；每个数据集有卡片和样本示例（或明写给不出）；每个基线有定位与公平性分析、缺席强基线已回答
@@ -269,11 +270,16 @@ python "<skill_dir>/tools/extract_figures.py" \
 
 ### 3.6 HTML 阅读视图渲染（standard/deep 完成后执行）
 
-md 报告落盘后（必须在**统一 QA 通过、定稿之后**）渲染配套 HTML：
+md 报告落盘后（必须在**统一 QA 通过、定稿之后**）渲染配套 HTML。**先过公式定界门**，再渲染：
 
 ```bash
-python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_解读报告.md"
+python "<skill_dir>/tools/lint_math.py" "<vault>/reports/"          # 必须 exit 0
+python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_解读报告.md" \
+    --embed-katex                                                   # 需先 --fetch-katex 一次
 ```
+
+- **渲染前必跑 `tools/lint_math.py`**：它扫描 .md 里**没有 `$…$` 定界符的公式**（`E^V_l`、`h_{l+1}`、`q=(qT,qV)`、`d̄`）。这类写法渲染器不会解释，会在 **.md 与 .html 里都显示成原始文本**——渲染器不做 `$` 配对自动识别，`--offline` 的"降级为源码"又会让它看起来只是 KaTeX 没加载，两种失败难以区分。exit 1 时先修 md 再渲染。`render_report.py` 内部也会对同一问题打 `[WARN]`（非阻断，便于边修边渲）
+- **推荐 `--embed-katex`**（先 `--fetch-katex` 一次）：KaTeX 的 JS/CSS/字体内嵌进单文件（每份约 700KB+），**离线可开**。默认的 CDN 模式在断网时公式**静默不渲染**，读者看到的仍是源码
 
 - 输出到 **`html/` 目录**（与 `reports/` 平级、与 md 同名）的 `.html`：图片相对路径（`../attachments/...`）原样有效，零拷贝
 - 自带：frontmatter 元信息卡、侧边目录（h2/h3 自动生成）、KaTeX 公式渲染、表格/引用块/代码样式、暗色模式与打印样式、`[[wikilink]]` 转样式化文本
@@ -554,6 +560,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 记忆条目模板：`references/memory_entry_template.md`
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3）
 - 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`；使用规则见 `references/dimensions.md`"🌐 外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见同节第 4 条；配额熔断 + `--resume` 补跑见"配额纪律"）
+- 公式定界检查：`tools/lint_math.py`（扫 .md 里未加 `$…$` 的公式，渲染前必须 exit 0；`render_report.py` 亦内嵌同一告警）；用法见 Phase 3.6
 - HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → `html/` 同名 .html，KaTeX/目录/嵌图；用法见 Phase 3.6）
 - 跨论文关系：结构化 `relations` frontmatter（唯一事实源，规则见 4.5；实现 `mcp_server/relations.py`）；体检 `tools/verify_graph_arrows.py`、旧 vault 迁移 `tools/migrate_relations.py`
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）
