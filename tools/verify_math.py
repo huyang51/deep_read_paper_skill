@@ -111,6 +111,27 @@ def extract_formulas(text):
     return spans, orphans
 
 
+def find_table_math_pipes(text):
+    """A bare `|` inside `$…$` on a TABLE ROW splits the cell in Obsidian.
+
+    `|` is the table column separator and Obsidian has no equivalent of the
+    HTML renderer's protect_table_pipes(); the parser runs before MathJax, so
+    the row is cut mid-formula and the table comes out misaligned. Known,
+    long-standing bug — the documented workaround is `\\vert` (or
+    `\\lvert`/`\\rvert`), which renders the identical glyph.
+    An escaped `\\|` is fine: that is the standard table-cell escape (and in
+    TeX it is the norm bar, which is usually what was meant anyway)."""
+    hits = []
+    for lineno, line in enumerate(strip_nonmath_regions(text).split("\n"), 1):
+        if not line.strip().startswith("|"):
+            continue
+        for m in re.finditer(r"\$[^$\n]+?\$", line):
+            if re.search(r"(?<!\\)\|", m.group(0)):
+                hits.append({"line": lineno, "tex": m.group(0),
+                             "fix": "把 | 换成 \\vert（或 \\lvert…\\rvert）"})
+    return hits
+
+
 def check_file(path):
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     spans, orphans = extract_formulas(text)
@@ -120,9 +141,14 @@ def check_file(path):
             if rx.search(line):
                 hostile.append({"line": lineno, "cmd": name, "fix": fix})
     return {
+        # keep the display flag: a block formula validated as inline is a
+        # different (and wrong) question — display-only constructs would be
+        # reported as failures that never occur on the page.
+        "formula_list": [{"tex": t, "display": d} for d, t, _ in spans],
         "formulas": [t for _, t, _ in spans],
         "orphan_dollars": [c for _, c in orphans],
         "hostile": hostile,
+        "table_pipes": find_table_math_pipes(text),
     }
 
 
@@ -212,11 +238,12 @@ def main(argv=None):
     for f in files:
         r = check_file(f)
         report[str(f)] = r
-        if r["formulas"]:
-            payload[str(f)] = [{"tex": t, "display": False} for t in r["formulas"]]
+        if r["formula_list"]:
+            payload[str(f)] = r["formula_list"]
 
     orphan_total = sum(len(r["orphan_dollars"]) for r in report.values())
     hostile_total = sum(len(r["hostile"]) for r in report.values())
+    pipe_total = sum(len(r["table_pipes"]) for r in report.values())
     mj_fails, katex_fails, notes = [], [], []
 
     n_formulas = sum(len(r["formulas"]) for r in report.values())
@@ -252,11 +279,12 @@ def main(argv=None):
         if n_span:
             notes.append(f"html/ 共 {n_span} 个 math span（KaTeX 校验见 render_report --embed-katex）")
 
-    ok = not (orphan_total or hostile_total or mj_fails or katex_fails)
+    ok = not (orphan_total or hostile_total or pipe_total or mj_fails or katex_fails)
 
     if args.json:
         print(json.dumps({"ok": ok, "formulas": n_formulas,
                           "orphan_dollars": orphan_total, "hostile": hostile_total,
+                          "table_pipes": pipe_total,
                           "mathjax_failures": mj_fails, "notes": notes},
                          ensure_ascii=False, indent=2))
     else:
@@ -271,6 +299,12 @@ def main(argv=None):
             for f, r in report.items():
                 for h in r["hostile"][:5]:
                     print(f"  {Path(f).name} L{h['line']}: {h['cmd']} → {h['fix']}")
+        if pipe_total:
+            print(f"\n[FAIL] {pipe_total} 处表格单元格里的公式含裸 `|` —— "
+                  f"Obsidian 会把它当列分隔符，撑破表格")
+            for f, r in report.items():
+                for h in r["table_pipes"][:5]:
+                    print(f"  {Path(f).name} L{h['line']}: {h['tex']}  →  {h['fix']}")
         if mj_fails:
             print(f"\n[FAIL] MathJax（默认配置）渲染失败 {len(mj_fails)} 条")
             for e in mj_fails[:8]:
