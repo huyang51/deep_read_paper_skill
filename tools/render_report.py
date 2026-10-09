@@ -779,8 +779,38 @@ def promote_body_masthead(body_md: str, metadata: dict):
         return body_md, None, []  # an h1 alone is content, not a masthead
 
     title = lines[h1_at].strip()[2:].strip()
-    remainder = "".join(lines[1:h1_at]) + "".join(lines[last_row + 1:])
+    tail_at = last_row + 1
+    # The template wraps the masthead table in `<div align="center">…</div>`.
+    # The opener sits *inside* the removed block (between the h1 and the first
+    # row), so it goes away with the rows — but the closer sits *after* the
+    # last row and survived, leaving the body one `</div>` short of balanced in
+    # every report, silently. Drop the lone closer that belongs to it.
+    probe = tail_at
+    while probe < len(lines) and not lines[probe].strip():
+        probe += 1
+    if probe < len(lines) and lines[probe].strip() == "</div>":
+        tail_at = probe + 1
+    remainder = "".join(lines[1:h1_at]) + "".join(lines[tail_at:])
     return body_md[:h1.start()] + remainder, title, rows
+
+
+def _inline_md(value):
+    """Inline markdown for a *promoted body-masthead* cell.
+
+    Those rows are body prose written in markdown (`| **发表** | … **IROS 2024** … |`),
+    so escape-only rendering showed the asterisks literally — the same silent
+    degradation as an undelimited formula. Frontmatter values still go through
+    html_mod.escape: frontmatter is data, and Obsidian does not treat it as
+    markdown either.
+
+    Escaped first, so the only tags that can appear are the ones Markdown
+    itself introduces; math is routed through the usual protect/restore pair so
+    a `$…$` in a masthead cell still reaches KaTeX."""
+    guarded, store = protect_math(html_mod.escape(str(value)))
+    out = markdown.markdown(guarded, extensions=MD_EXTENSIONS,
+                            output_format="html")
+    out = restore_math(out, store)
+    return re.sub(r"^<p>(.*)</p>$", r"\1", out.strip(), flags=re.S)
 
 
 def meta_header(post, minutes, fallback_title=None, extra_rows=None):
@@ -800,7 +830,7 @@ def meta_header(post, minutes, fallback_title=None, extra_rows=None):
     for label, val in (extra_rows or []):
         seen_labels.add(label)
         rows.append("<div><b>%s：</b>%s</div>" % (html_mod.escape(label),
-                                                  html_mod.escape(str(val))))
+                                                  _inline_md(val)))
     labels = {"authors": "作者", "venue": "发表于", "year": "年份",
               "core_contribution": "核心贡献", "date_read": "阅读日期",
               "method_category": "方法类别", "problem_domain": "问题领域"}
