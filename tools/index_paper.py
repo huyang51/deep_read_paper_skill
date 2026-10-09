@@ -96,7 +96,14 @@ def main():
     if args.relations:
         raw_relations = args.relations
         candidate = Path(raw_relations)
-        if candidate.is_file():
+        # Inline JSON longer than a single path component (NAME_MAX, 255 bytes)
+        # makes the is_file() probe raise OSError (ENAMETOOLONG) instead of
+        # returning False — guard it so long inline JSON is parsed directly.
+        try:
+            is_file = candidate.is_file()
+        except OSError:
+            is_file = False
+        if is_file:
             raw_relations = candidate.read_text(encoding="utf-8-sig")
         try:
             relations = json.loads(raw_relations)
