@@ -304,7 +304,9 @@ python "<skill_dir>/tools/render_report.py" --md "<vault>/reports/{short_name}_�
   python "<skill_dir>/tools/verify_math.py" "<vault>/reports/" --mathjax-dir <含 node_modules/mathjax-full 的目录>
   ```
 
-  报告有两个阅读视图、**两套不同的数学引擎**：vault 里的 `.md` 在 **Obsidian（MathJax）** 里读，`html/*.html` 在浏览器里用 **KaTeX** 渲染。`lint_math.py` 只回答"公式有没有漏 `$`"；**这个工具回答"定界符都在的情况下，读者能不能真看到公式"**——两者的失败模式不同：`\tag{1}` 能通过 lint、能通过 KaTeX、也能通过"装了全部包的 MathJax"，但在 Obsidian 里报 `Undefined control sequence`（Obsidian 不启用 AMS 编号）。该工具让 MathJax 用**默认包集**渲染（最保守配置，需要可选包的一律算失败），所以通过 = 到哪都能显示
+  报告有两个阅读视图、**两套不同的数学引擎**：vault 里的 `.md` 在 **Obsidian（MathJax）** 里读，`html/*.html` 在浏览器里用 **KaTeX** 渲染。`lint_math.py` 只回答"公式有没有漏 `$`"；**这个工具回答"定界符都在的情况下，读者能不能真看到公式"**——两者的失败模式不同：`\tag{1}` 能通过 lint、能通过 KaTeX、也能通过"装了全部包的 MathJax"，但在 Obsidian 里报 `Undefined control sequence`（Obsidian 不启用 AMS 编号）。
+
+  ⚠️ **这个工具的能力边界要说清楚**（2026-10-13 校准）：它由四部分组成，**只有「$ 配对」与「Obsidian 敌对命令清单」两项对 Obsidian 有断言能力**；MathJax 全量渲染那一项**只是语法检查**（公式本身有没有写错），**不能**用来判断 Obsidian 兼容性——因为 Obsidian 的 MathJax 包清单无公开文档，任何单一配置都会失真：零包配置会把 `pmatrix`/`cases`/`aligned` 这类**Obsidian 明明支持**的构造误判为失败，而全包配置又会放过 `\tag` 这类**Obsidian 确实不支持**的。所以：**清单说有问题才是问题；清单没列 ≠ 一定安全**，遇到清单外的生僻宏，最可靠的验证是直接在 Obsidian 里打开看一眼
 
 - 输出到 **`html/` 目录**（与 `reports/` 平级、与 md 同名）的 `.html`：图片相对路径（`../attachments/...`）原样有效，零拷贝
 - 自带：frontmatter 元信息卡、侧边目录（h2/h3 自动生成）、KaTeX 公式渲染、表格/引用块/代码样式、暗色模式与打印样式、`[[wikilink]]` 转样式化文本
@@ -586,7 +588,7 @@ papers 目录下的文件以 `short_name` 命名（如 `ReT.md`），在图谱�
 - 图片提取工具：`tools/extract_figures.py`（几何裁剪 + caption 锚定，用法与硬性规则见 1.3）
 - 外部引用核验：MCP 工具 `cite_verify` / `paper_citations`（OpenAlex + Semantic Scholar，实现于 `mcp_server/cite_api.py`；使用规则见 `references/dimensions.md`"🌐 外部断言核验"）；批量存在性门 `tools/verify_refs.py`（点名外部工作 → §6 台账，规则见同节第 4 条；配额熔断 + `--resume` 补跑见"配额纪律"）
 - 公式定界检查：`tools/lint_math.py`（扫 .md 里未加 `$…$` 的公式，**渲染前**必须 exit 0；`render_report.py` 亦内嵌同一告警）；用法见 Phase 3.6
-- 公式显示检查：`tools/verify_math.py`（**渲染后**验两种视图——Obsidian/MathJax 的 `$` 配对与敌对命令 + HTML/KaTeX；MathJax 按**默认包集**渲染，通过即可到哪都显示）；用法见 Phase 3.6
+- 公式显示检查：`tools/verify_math.py`（**渲染后**验：Obsidian 侧查 `$` 配对 + **有据可查**的敌对命令清单，HTML 侧跑 KaTeX；另附一项 TeX **语法**检查——它只证明公式没写错，**不证明 Obsidian 兼容**，原因见 Phase 3.6 的边界说明）；用法见 Phase 3.6
 - HTML 阅读视图渲染器：`tools/render_report.py`（md 定稿 → `html/` 同名 .html，KaTeX/目录/嵌图；用法见 Phase 3.6）
 - 跨论文关系：结构化 `relations` frontmatter（唯一事实源，规则见 4.5；实现 `mcp_server/relations.py`）；体检 `tools/verify_graph_arrows.py`、旧 vault 迁移 `tools/migrate_relations.py`
 - 分诊速览卡模板：`references/quickcard_template.md`（quick 档唯一产出）

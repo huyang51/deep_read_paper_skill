@@ -22,14 +22,30 @@ Checks
 2. Obsidian-hostile commands (pure python, always on)
    Obsidian's bundled MathJax does not enable AMS equation tags, so `\\tag`
    raises "Undefined control sequence"; `\\label`/`\\eqref` are reported to
-   break the equation too. These are deny-listed rather than discovered,
-   because discovering them costs a MathJax dependency — see check 3.
+   break the equation too. **This deny-list is the ONLY part of this tool that
+   claims anything specific about Obsidian**, and each entry carries its
+   evidence in a comment.
 
-3. full MathJax render (optional; needs `mathjax-full`)
-   The real oracle for the Obsidian view. Renders every formula with the
-   DEFAULT package set (the pessimistic config): anything that needs an
-   optional package fails here, which is the point. Point --mathjax-dir at a
-   directory containing node_modules/mathjax-full, or `npm i mathjax-full`.
+3. TeX syntax check (optional; needs `mathjax-full`)
+   Renders every formula with a COMPLETE MathJax package set to confirm the TeX
+   parses at all. Point --mathjax-dir at a directory containing
+   node_modules/mathjax-full, or `npm i mathjax-full`.
+
+   ⚠️ **This is a syntax check, not an Obsidian oracle** — a correction made
+   2026-10-13 after the first version was found to be mis-calibrated. That
+   version ran `new TeX({})`, believing it meant "MathJax's default
+   (pessimistic) package set". It does not: in the node build `TeX` registers
+   NO packages unless handed package *objects*. Measured, it rejected 17 of 24
+   common constructs — `pmatrix`, `bmatrix`, `aligned`, `\\operatorname`,
+   `\\boldsymbol`, … — **all of which Obsidian supports**. It reported "will
+   break in Obsidian" for formulas that were fine.
+
+   No single MathJax config can proxy Obsidian, because Obsidian's own package
+   list is not publicly documented: a package-less config over-reports and
+   AllPackages under-reports (e.g. AllPackages happily renders `\\tag`, which
+   Obsidian does not). Obsidian compatibility is therefore approximated by the
+   documented deny-list only, and this check is kept for what it genuinely
+   proves — malformed TeX that no engine would render.
 
 4. KaTeX render of html/*.html (optional; needs node + the fetched dist)
    The oracle for the HTML view, using the page's own options. Only runs when
@@ -55,18 +71,35 @@ _FENCE_RE = re.compile(r"^([ \t]*)(```+|~~~+)[^\n]*\n.*?^\1\2[ \t]*$",
                        re.DOTALL | re.MULTILINE)
 _INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 
-# Commands Obsidian's MathJax does not provide out of the box. Kept explicit
-# and justified rather than pattern-guessed:
-#   \tag/\label/\eqref/\ref — AMS equation numbering; MathJax needs
+# Commands Obsidian's MathJax is DOCUMENTED not to provide.
+#
+# Every entry must carry its evidence — this list is the only part of the tool
+# that asserts something about Obsidian, and an un-evidenced entry would be
+# exactly the kind of guess that mis-calibrated check 3 (see module docstring).
+# Uncertainty is not evidence: if a construct's Obsidian status is merely
+# unknown, leave it OUT and let check 3 confirm at least that the TeX parses.
+#
+#   \tag / \label / \eqref / \ref — AMS equation numbering. MathJax needs
 #     tex:{tags:'ams'} for \tag and the tagformat extension for \eqref, and
-#     Obsidian does not enable them (forum.obsidian.md/t/3189, /t/4899).
-#   \bm — needs the boldsymbol package; use \boldsymbol instead.
+#     Obsidian does not enable them; forum reports of "\label 与 \ref 同时使用
+#     报错" and the dedicated "Auto Equation Numbering" plugin both exist
+#     because of this gap (forum.obsidian.md/t/3189, /t/4899).
+#
+# NOT listed, deliberately:
+#   \bm — its Obsidian status is *unconfirmed* (only \boldsymbol is documented
+#     as a MathJax extension). Kept below as a soft preference, not a claim:
+#     \boldsymbol is the safer spelling and renders identically.
+#   cases / pmatrix / bmatrix / vmatrix / aligned — Obsidian SUPPORTS these
+#     (documented usage + community template plugins). The first version of
+#     check 3 wrongly reported them as broken.
 OBSIDIAN_HOSTILE = [
     (re.compile(r"\\tag\b"), r"\tag", r"use \qquad(N) and write 式(N) in prose"),
     (re.compile(r"\\label\b"), r"\label", r"drop it; cite the equation in prose"),
     (re.compile(r"\\eqref\b"), r"\eqref", r"cite the equation in prose"),
     (re.compile(r"(?<![A-Za-z])\\ref\b"), r"\ref", r"cite the equation in prose"),
-    (re.compile(r"\\bm\s*\{"), r"\bm", r"use \boldsymbol{…}"),
+    (re.compile(r"\\bm\s*\{"), r"\bm",
+     r"prefer \boldsymbol{…} — same output, and \boldsymbol is the documented "
+     r"MathJax extension (\bm's Obsidian status is unconfirmed)"),
 ]
 
 
@@ -165,9 +198,24 @@ const {SVG}=require(B+'/mathjax-full/js/output/svg.js');
 const {liteAdaptor}=require(B+'/mathjax-full/js/adaptors/liteAdaptor.js');
 const {RegisterHTMLHandler}=require(B+'/mathjax-full/js/handlers/html.js');
 const a=liteAdaptor();RegisterHTMLHandler(a);
-// DEFAULT package set on purpose: the pessimistic config. Anything needing an
-// optional package fails here, which is what we want to know.
-const doc=mathjax.document('',{InputJax:new TeX({}),OutputJax:new SVG({fontCache:'none'})});
+// FULL package set (AllPackages) — NOT `new TeX({})`.
+//
+// `new TeX({})` looks like "the default config" but in the node build it
+// registers NO packages at all: the `packages` option takes *package objects*,
+// not names, so passing names is silently ignored. Measured consequence
+// (2026-10-13): package-less TeX rejects 17 of 24 common constructs, including
+// `pmatrix` / `bmatrix` / `aligned` / `\operatorname` / `\boldsymbol` — all of
+// which Obsidian DOES support (they are standard, and Obsidian has community
+// plugins built around them). It was producing false "will break in Obsidian"
+// verdicts on perfectly safe formulas.
+//
+// What this check can honestly be is a **syntax** check: does the TeX parse
+// under a complete engine? Obsidian compatibility is NOT something any single
+// MathJax config can proxy (its package list is not publicly documented — a
+// base-only config over-reports, AllPackages under-reports), so that duty
+// lives in OBSIDIAN_HOSTILE in Python.
+const {AllPackages}=require(B+'/mathjax-full/js/input/tex/AllPackages.js');
+const doc=mathjax.document('',{InputJax:new TeX({packages:AllPackages}),OutputJax:new SVG({fontCache:'none'})});
 const data=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 let bad=0;
 for(const [file,list] of Object.entries(data)){
@@ -306,7 +354,8 @@ def main(argv=None):
                 for h in r["table_pipes"][:5]:
                     print(f"  {Path(f).name} L{h['line']}: {h['tex']}  →  {h['fix']}")
         if mj_fails:
-            print(f"\n[FAIL] MathJax（默认配置）渲染失败 {len(mj_fails)} 条")
+            print(f"\n[FAIL] TeX 语法检查未通过 {len(mj_fails)} 条"
+                  f"（全量包集下仍无法解析——大概率是公式本身写错了）")
             for e in mj_fails[:8]:
                 print(f"  {Path(e['file']).name}: {e['tex']!r}\n    -> {e['err']}")
         for n in notes:
