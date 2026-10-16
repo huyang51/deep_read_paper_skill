@@ -17,9 +17,9 @@ import os
 import re
 import sys
 
-MAIN_SEC_BUDGET = 35
+MAIN_SEC_BUDGET = 35       # 图速览各图块另有 28 行的例外，见 report_template.md
 APP_SEC_BUDGET = 70
-MAIN_TOTAL_BUDGET = 450
+MAIN_TOTAL_BUDGET = 500
 CHARS_PER_MIN = 400  # 中文阅读速度（含标点）
 
 APPENDIX_H2_PREFIXES = ("## ━━━ 6.", "## ━━━ 附：", "## ━━━ ✅")
