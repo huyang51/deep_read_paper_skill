@@ -437,7 +437,7 @@ tags: [tag1, tag2]
 >
 > 1. **相关性优先**：声明 `relations` 前**必须**调用 MCP 工具 `paper_find_related` 找候选，人工核验后才写
 > 2. **`relations` 是唯一事实源**：`related_papers` 与 `## 后续引用` 图谱边都是它的投影，**禁止手改**（手改会在下次同步被覆盖）
-> 3. **方向是数据，不是阅读顺序**：`direction` 由你按两篇论文的实际关系声明，脚本据此把图谱边放到正确的一侧
+> 3. **方向是数据，年份是客观证据**：`direction` 相对本文（对方是前作 = `predecessor`）。**可省略**——双方年份可排序时按发表年自动推导，缺省即正确，也杜绝「视角反转」填错。仅同年/缺年份/确需推翻年份时才显式声明；声明与年份矛盾且 note 无「年份例外：」说明的，校验报 ERROR
 
 #### 4.5.1 规则 1：相关性优先（最重要的规则）
 
@@ -463,7 +463,7 @@ tags: [tag1, tag2]
    - `relation_type` 是否合理（method_similar / problem_related / complementary / evolutionary）
    - `shared_keywords` 是否真的重叠（不只是字符串匹配）
    - 是否真的有学术联系（不是同名巧合）
-5. 核验通过的候选写成 `relations` 条目（`target` / `type` / `direction` / `note`）——**`direction` 是相对本文的**：对方是本文的前身写 `predecessor`，对方是本文的后续工作写 `successor`，同期并行写 `peer`
+5. 核验通过的候选写成 `relations` 条目（`target` / `type` / `note` 必填，`direction` 通常**省略**——年份自动推导，旧论文 → 新论文的边自动落对侧）。仅同年（如两篇 2025，一篇基于另一篇）或年份不能代表先后时才显式声明：**`direction` 是相对本文的**——对方是本文的前身写 `predecessor`，对方是本文的后续写 `successor`，同期并行写 `peer`。⚠️ 易错点：给 DGPO 声明它的基座 SearchR1 时，容易把「DGPO 是后继」这个事实直接填成 `successor`——正确写法是 `predecessor`（对方是前作）。不确定就省略该字段
 6. 重新索引（`index_paper.py --relations` 或 MCP 工具 `paper_index`）——互指条目、`related_papers` 投影与图谱边自动同步
 
 > ⚠️ **不能直接照搬工具结果**——工具是基于字符串匹配启发式，可能误判。人工核验是最后一道防线。
@@ -487,7 +487,7 @@ tags: [tag1, tag2]
 
 例：先读 2024 的 ReT，再读 2023 的 UniIR。索引 UniIR 时声明 `{"target": <ReT 的 id>, "type": "evolutionary", "direction": "successor"}`——脚本把 `[[ReT]]` 写进 **UniIR** 的 `## 后续引用`（而不是像旧脚本那样误写进 ReT），并在 ReT 里写入 `direction: predecessor` 的互指条目。
 
-> ⚠️ **声明与年份冲突**（preprint、v1/v2、合并记录等）：报 `year_conflict` **提示**，不阻断。以声明为准，必要时在 `note` 里写明原因。
+> ⚠️ **声明与年份冲突**（preprint、v1/v2、合并记录等）：`direction` 缺省按年份推导，不会冲突。**显式声明**与年份矛盾的 direction 且 `note` 含「年份例外：原因」→ 报 `year_conflict` **提示**，以声明为准；note 无此说明 → 报 **ERROR**（阻断校验，`verify_graph_arrows.py` exit 1），按提示修正方向或补例外说明
 >
 > ⚠️ **正文里手写的 wikilink 仍是错误来源**：脚本写入的边不会出错，但你在正文随手写一个 `[[ReT]]` 就会造出重复边或方向错误的边。引用 vault 内论文一律用**加粗文本**。
 

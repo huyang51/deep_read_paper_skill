@@ -197,7 +197,7 @@ TOOLS = [
                 "relations": {
                     "type": "array",
                     "default": [],
-                    "description": "结构化关联：每条 {target: 关联论文ID, type: method_similar|problem_related|complementary|evolutionary, direction: predecessor(它是本文前作)|successor(它是本文后继)|peer(同期并列), note: 一句话说明}。写入时自动回写对方论文的互指条目与 related_papers 投影，并按 direction 维护图谱箭头（## 后续引用）",
+                    "description": "结构化关联：每条 {target: 关联论文ID, type: method_similar|problem_related|complementary|evolutionary, direction: predecessor(它是本文前作)|successor(它是本文后继)|peer(同期并列)——可省略,省略时按发表年自动推导,同年/缺年份按 peer 处理并告警, note: 一句话说明}。写入时自动回写对方论文的互指条目与 related_papers 投影，并按 direction 维护图谱箭头（## 后续引用）。显式声明的 direction 若与发表年矛盾且 note 无「年份例外：」说明，校验报 ERROR",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -206,7 +206,7 @@ TOOLS = [
                             "direction": {"type": "string", "enum": ["predecessor", "successor", "peer"]},
                             "note": {"type": "string"}
                         },
-                        "required": ["target", "type", "direction"]
+                        "required": ["target", "type"]
                     }
                 },
                 "date_read": {"type": "string", "default": "", "pattern": "^\\d{4}-\\d{2}-\\d{2}$|^$", "description": "阅读日期 YYYY-MM-DD（或空串；模型侧 pattern 同约束）"},

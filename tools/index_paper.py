@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--keywords", default="", help="Comma-separated keywords")
     parser.add_argument("--core_contribution", default="", help="One-sentence core contribution")
     parser.add_argument("--novelty_level", default="", choices=["", "incremental", "substantial", "breakthrough"], help="Novelty level: incremental | substantial | breakthrough")
-    parser.add_argument("--relations", default="", help='JSON array of structured relations: [{"target":3,"type":"method_similar","direction":"predecessor","note":"..."}] — type: method_similar|problem_related|complementary|evolutionary; direction: predecessor|successor|peer')
+    parser.add_argument("--relations", default="", help='JSON array of structured relations: [{"target":3,"type":"method_similar","direction":"predecessor","note":"..."}] — type: method_similar|problem_related|complementary|evolutionary; direction: predecessor|successor|peer, OPTIONAL — omitted direction is derived from publication years (same-year/unknown-year falls back to peer with a warning); a declared direction contradicting the years needs 「年份例外：...」 in the note or validation fails')
     parser.add_argument("--date_read", default=date.today().isoformat(), help="Read date YYYY-MM-DD")
     parser.add_argument("--read_mode", default="standard", choices=["quick", "standard", "deep"], help="Phase-0 triage mode recorded in frontmatter")
     parser.add_argument("--aliases", default="", help="Comma-separated aliases for Obsidian graph display and search")

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 from mcp_server.config import PAPERS_DIR
 from mcp_server.relations import (
-    coerce_id, inverse_direction, merge_relation,
+    coerce_id, derive_direction, inverse_direction, merge_relation,
     normalize_relations, project_related_papers, relation_index, relations_of,
 )
 
@@ -571,7 +571,7 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
     if papers_dir is None:
         papers_dir = PAPERS_DIR
 
-    result = {"updated": [], "missing": [], "healed": []}
+    result = {"updated": [], "missing": [], "healed": [], "direction_defaulted": []}
     entries = relations_of(paper)
 
     index = relation_index(get_all_papers(papers_dir))
@@ -594,9 +594,20 @@ def sync_relations(paper: dict, papers_dir: Path = None) -> dict:
             continue
         other = fresh
 
+        # An omitted direction is resolved from publication order here, before
+        # mirroring: the mirror and the graph edge must carry the derived
+        # value, not an empty string. Same-year/unknown-year pairs fall back
+        # to peer — recorded so the write path can tell the agent to declare
+        # the direction explicitly (a silent peer would drop the edge).
+        direction = entry["direction"]
+        if not direction:
+            direction = derive_direction(paper.get("year"), other.get("year"))
+            if direction == "peer":
+                result["direction_defaulted"].append(entry["target"])
+
         back = relations_of(other)
         back, changed = merge_relation(back, self_id, entry["type"],
-                                       inverse_direction(entry["direction"]),
+                                       inverse_direction(direction),
                                        note=entry["note"], mark_synced=True)
         projection = project_related_papers(back)
         if changed or other.get("related_papers") != projection:

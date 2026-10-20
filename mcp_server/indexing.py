@@ -19,9 +19,9 @@ from typing import Callable, Iterable
 
 from mcp_server.config import sanitize_error
 from mcp_server.markdown_parser import (
-    create_paper_file, parse_paper, sync_paper_relations,
+    create_paper_file, get_all_papers, parse_paper, sync_paper_relations,
 )
-from mcp_server.relations import relations_of
+from mcp_server.relations import WARN, relations_of, validate_relations
 
 
 def index_paper(paper_data: dict, open_store: Callable[[], object], message: str,
@@ -67,6 +67,24 @@ def index_paper(paper_data: dict, open_store: Callable[[], object], message: str
                 f"图谱里不会出现对应节点。先在 vault 里索引对方论文，再重跑一次同步"
                 f"（关系与图谱边才会补齐）。"
             )
+        for tid in sync.get("direction_defaulted", []):
+            warnings.append(
+                f"⚠️ target={tid} 的关系未声明 direction 且双方同年/年份缺失——"
+                f"已按 peer 处理（无图谱边）；若实为前作/后继，请显式声明 direction 后重新索引。")
+        # Surface validator issues at write time, not just at verify time: a
+        # direction that contradicts the publication years or its own note is
+        # exactly the mistake the declaring agent makes while filling the
+        # field, and it has already propagated to the mirror and the graph
+        # edge by now — the post-hoc verifier sees a self-consistent but wrong
+        # graph (live repro 2026-10-20). ERRORs carry ❌ and must be fixed by
+        # re-indexing with corrected relations; WARNs are hygiene signals. The
+        # mirrors invalidated the papers cache when they wrote, so this reads
+        # back the synced state, not the pre-sync one.
+        relation_issues = validate_relations(get_all_papers())
+        warnings.extend(f"❌ 关系校验错误：{i['message']}（修正 relations 后重新索引本论文）"
+                        for i in relation_issues if i["severity"] == ERROR)
+        warnings.extend(f"⚠️ {i['message']}"
+                        for i in relation_issues if i["severity"] == WARN)
 
     try:
         open_store().upsert_paper(str(paper["id"]), paper)

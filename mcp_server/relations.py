@@ -13,7 +13,8 @@ Here the same facts become data:
     relations:
       - target: 3
         type: method_similar          # 语义类别（词表见 RELATION_TYPES）
-        direction: predecessor        # 相对本文：前作 / 后继 / 同期并列
+        direction: predecessor        # 相对本文：前作 / 后继 / 同期并列；可省略——
+                                      # 年份可排序时按发表年自动推导（见 resolve_direction）
         note: "本文沿用其 max-sim 打分形式"
 
 ``related_papers`` stays as the machine-readable projection of ``relations``
@@ -22,6 +23,7 @@ read the old field keep working.
 
 Pure functions only — no file I/O, so every rule below is unit-testable.
 """
+import re
 from typing import Iterable, Optional
 
 
@@ -98,6 +100,86 @@ def derive_direction(self_year, other_year) -> str:
     if b > a:
         return "successor"     # the other paper came later -> it is our successor
     return "peer"
+
+
+# An explicitly-declared direction that contradicts the publication years is
+# not automatically wrong — preprint/venue-year lags exist — but it must own
+# that contradiction in the note. This marker is what "owns" looks like;
+# anything else is treated as the perspective-inversion bug this guard exists
+# for (live repro 2026-10-20).
+YEAR_EXCEPTION_RE = re.compile("年份例外|年份倒挂")
+
+# Note phrases that describe the TARGET as this paper's base/predecessor.
+# Checked against the target's own names so the plain word "基于" in unrelated
+# contexts ("基于 PPO 的优势估计" with target=SearchR1) cannot fire alone.
+BASE_KEYWORDS = ("基座", "前身", "沿用", "基于", "借鉴")
+
+_NAME_WINDOW = 20  # normalized chars a target name may sit from the keyword
+_SELF_BASE_WINDOW = 8  # normalized chars before the keyword that may carry 以本文为
+
+
+def _norm_name(text: str) -> str:
+    """Lowercase letters+digits+CJK only — so ``Search-R1`` matches ``SearchR1``."""
+    return re.sub(r"[^0-9a-z一-鿿]+", "", (text or "").lower())
+
+
+def _target_name_variants(other: dict) -> list[str]:
+    """Normalized names the note might use for the target paper."""
+    variants = []
+    for key in ("short_name", "title"):
+        value = (other.get(key) or "").strip()
+        if value:
+            variants.append(_norm_name(value))
+    for alias in other.get("aliases") or []:
+        if isinstance(alias, str) and alias.strip():
+            variants.append(_norm_name(alias))
+    return [v for v in variants if len(v) >= 3]  # "R1" alone would match anywhere
+
+
+def note_base_side(note: str, other: dict) -> Optional[str]:
+    """Which side the note says is the pair's base/predecessor.
+
+    Returns ``"target"`` (note describes the other paper as this paper's base),
+    ``"self"`` (note describes THIS paper as the other's base — e.g. 「对方以
+    本文为基座」, which supports ``successor``), or None. Skips ``synced``
+    mirrors at the call site: the same note text is mirrored verbatim to the
+    other paper, where both readings flip.
+
+    The 「以本文为」 guard exists because of a live false positive
+    (2026-10-20): 「DeepMMSearch-R1 直接以本文为基座」 names the target right
+    before the keyword, but the base in that sentence is *this* paper — the
+    naive keyword+name match read it backwards.
+    """
+    norm_note = _norm_name(note)
+    if not norm_note:
+        return None
+    variants = _target_name_variants(other)
+    for kw in BASE_KEYWORDS:
+        start = 0
+        while (idx := norm_note.find(kw, start)) != -1:
+            before = norm_note[max(0, idx - _SELF_BASE_WINDOW): idx]
+            after = norm_note[idx + len(kw): idx + len(kw) + _NAME_WINDOW]
+            if "以本文为" in before or "本文为" in before:
+                return "self"
+            if variants and any(v in after or v in before for v in variants):
+                return "target"
+            start = idx + 1
+    return None
+
+
+def resolve_direction(entry: dict, self_year, other_year) -> tuple[str, str]:
+    """``(direction, source)`` with declared beating derived.
+
+    ``source`` is ``"declared"`` (entry carried an explicit direction),
+    ``"derived"`` (publication order decided — strictly different years), or
+    ``"defaulted"`` (equal/unknown years fell back to peer). Callers surface
+    ``defaulted``: a same-year base/followup pair silently becoming ``peer``
+    loses both its edge and its semantics.
+    """
+    if entry.get("direction"):
+        return entry["direction"], "declared"
+    derived = derive_direction(self_year, other_year)
+    return derived, ("derived" if derived != "peer" else "defaulted")
 
 
 def _clean_note(note) -> str:
@@ -262,27 +344,71 @@ def validate_relations(papers: Iterable[dict]) -> list[dict]:
                 add("unknown_type", ERROR, paper,
                     f"[{short}] → [{other.get('short_name')}] type='{e['type']}' "
                     f"不在词表 {list(RELATION_TYPES)}", target_id)
-            if e["direction"] not in DIRECTIONS:
+            if e["direction"] and e["direction"] not in DIRECTIONS:
                 add("unknown_direction", ERROR, paper,
                     f"[{short}] → [{other.get('short_name')}] direction="
                     f"'{e['direction']}' 不在词表 {list(DIRECTIONS)}", target_id)
                 continue
 
-            # ---- year sanity (warning: influence direction is the intent, a
-            # year disagreement usually means one of the two is a preprint or a
-            # mis-typed year, not that the relation is wrong) ----
-            try:
-                self_year, other_year = int(paper.get("year")), int(other.get("year"))
-                if e["direction"] == "predecessor" and other_year > self_year + 1:
-                    add("year_conflict", WARN, paper,
-                        f"[{short}]({self_year}) 称 [{other.get('short_name')}]"
-                        f"({other_year}) 为前作，但对方更晚发表", target_id)
-                elif e["direction"] == "successor" and other_year < self_year - 1:
-                    add("year_conflict", WARN, paper,
-                        f"[{short}]({self_year}) 称 [{other.get('short_name')}]"
-                        f"({other_year}) 为后继，但对方更早发表", target_id)
-            except (TypeError, ValueError):
-                pass
+            # ---- direction resolution: declared beats derived ----
+            # An omitted direction is filled from publication order — the
+            # objective field decides, and the perspective-inversion bug class
+            # (live repro 2026-10-20) becomes structurally impossible for
+            # entries that simply leave the field out. Equal/unknown years
+            # fall back to peer with a warning: a same-year base/followup pair
+            # silently losing its edge is exactly what the agent must see.
+            direction, dsource = resolve_direction(e, paper.get("year"), other.get("year"))
+            if dsource == "defaulted":
+                add("direction_defaulted_peer", WARN, paper,
+                    f"[{short}] → [{other.get('short_name')}] 未声明 direction 且双方"
+                    f"同年/年份缺失——已按 peer 处理（无图谱边）；若实为前作/后继，"
+                    f"请显式声明 direction", target_id)
+
+            # ---- year sanity: a DECLARED direction that crosses years against
+            # publication order is almost always the perspective inversion the
+            # declaring agent makes while filling the field — read "successor"
+            # as "I am the successor" instead of "the target is" (live repro
+            # 2026-10-20: DGPO 2026 declared its own predecessor SearchR1 2025
+            # as successor). Zero tolerance, ERROR unless the note owns the
+            # contradiction via a 「年份例外:…」 marker — preprint/venue-year
+            # lags are real, but they must be declared, not silent. Derived
+            # directions cannot contradict the years by construction.
+            if dsource == "declared":
+                try:
+                    self_year, other_year = int(paper.get("year")), int(other.get("year"))
+                    contradicts = ((e["direction"] == "predecessor" and other_year > self_year)
+                                   or (e["direction"] == "successor" and other_year < self_year))
+                    if contradicts:
+                        if YEAR_EXCEPTION_RE.search(e.get("note") or ""):
+                            add("year_conflict", WARN, paper,
+                                f"[{short}]({self_year}) 称 [{other.get('short_name')}]"
+                                f"({other_year}) 为{'前作' if e['direction'] == 'predecessor' else '后继'}"
+                                f"，与发表年矛盾——note 已声明年份例外，以声明为准", target_id)
+                        else:
+                            add("year_conflict", ERROR, paper,
+                                f"[{short}]({self_year}) 称 [{other.get('short_name')}]"
+                                f"({other_year}) 为{'前作' if e['direction'] == 'predecessor' else '后继'}"
+                                f"，与发表年矛盾且 note 无「年份例外」说明——确属倒挂"
+                                f"（preprint/会议年差）就在 note 补「年份例外：原因」，"
+                                f"否则把 direction 改为与年份一致的方向", target_id)
+                except (TypeError, ValueError):
+                    pass
+
+            # ---- note-vs-direction semantic cross-check ----
+            # The note text is independent evidence the year check cannot see.
+            # Mirrors are skipped: the same note is written verbatim to the
+            # other side, where the base relationship flips and the keywords
+            # would false-positive (live repro 2026-10-20: DGPO's mirrored
+            # note in SearchR1.md still says "直接基座：DGPO 整体沿用…").
+            if not e.get("synced") and direction in ("predecessor", "successor"):
+                side = note_base_side(e.get("note") or "", other)
+                if ((side == "target" and direction == "successor")
+                        or (side == "self" and direction == "predecessor")):
+                    add("note_direction_mismatch", WARN, paper,
+                        f"[{short}] → [{other.get('short_name')}] 的 note 把"
+                        f"{'对方' if side == 'target' else '本文'}描述为基座/前作，"
+                        f"但 direction 解析为 {direction}——疑似视角反转，请核对方向",
+                        target_id)
 
             # ---- the invariant ----
             back = next((r for r in relations_of(other)
@@ -290,18 +416,20 @@ def validate_relations(papers: Iterable[dict]) -> list[dict]:
             if back is None:
                 add("missing_reciprocal", ERROR, paper,
                     f"[{short}] 声明 → [{other.get('short_name')}]（{e['type']}/"
-                    f"{e['direction']}），但对方没有回写该关系——运行即同步或跑 "
+                    f"{direction}），但对方没有回写该关系——运行即同步或跑 "
                     f"tools/migrate_relations.py", target_id)
             else:
+                back_direction, _ = resolve_direction(back, other.get("year"),
+                                                      paper.get("year"))
                 if back["type"] != e["type"]:
                     add("type_conflict", ERROR, paper,
                         f"[{short}] 声明 {e['type']}，[{other.get('short_name')}] "
                         f"回写 {back['type']}", target_id)
-                if back["direction"] != inverse_direction(e["direction"]):
+                if back_direction != inverse_direction(direction):
                     add("direction_conflict", ERROR, paper,
-                        f"[{short}] 声明 direction={e['direction']}，"
-                        f"[{other.get('short_name')}] 回写 {back['direction']}"
-                        f"（应为 {inverse_direction(e['direction'])}）", target_id)
+                        f"[{short}] 声明 direction={direction}，"
+                        f"[{other.get('short_name')}] 回写 {back_direction}"
+                        f"（应为 {inverse_direction(direction)}）", target_id)
 
             if not e["note"] and not _mentions(paper, other):
                 add("no_justification", WARN, paper,

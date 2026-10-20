@@ -26,7 +26,7 @@ novelty_level: incremental | substantial | breakthrough
 relations:
   - target: <对方论文ID>
     type: method_similar | problem_related | complementary | evolutionary
-    direction: predecessor | successor | peer   # 相对本文：对方是本文的前身 / 后续 / 同期
+    direction: predecessor | successor | peer   # 相对本文：对方是本文的前身 / 后续 / 同期；可省略（年份自动推导，仅同年/例外时显式声明）
     note: "一句话关联依据（可留空，但正文 ## 与前人工作的关系 里必须有依据）"
 related_papers: []   # relations 的自动投影（双方 ID 自动互加），请勿手写
 date_read: YYYY-MM-DD
